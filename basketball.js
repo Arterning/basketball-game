@@ -47,6 +47,7 @@ let attempts = 0
 let remaining = clockDuration
 let charge = 0
 let airborne = 0
+let hasMoved = false
 let stride = 0
 let robotStride = 0
 let dash = 0
@@ -78,6 +79,7 @@ function prepareRound() {
   charge = airborne = stride = robotStride = dash = dashCooldown = 0
   defendTime = defendCooldown = recovery = 0
   defend = "guard"
+  hasMoved = false
   shot = null
   const x = [0, -2.8, 2.8][(round - 1) % 3]
   player.root.position.set(x, 0, 1.8)
@@ -131,13 +133,14 @@ function advancePlayer(dt) {
   dash = Math.max(0, dash - dt)
   const position = player.root.position
   move.set(input.move.x, 0, input.move.y)
-  if (charge || move.lengthSq() < 0.001) return
+  if (!dt || charge || move.lengthSq() < 0.001) return
   if (input.down("sprint") && dashCooldown === 0) {
     dash = 0.29
     dashCooldown = 0.85
   }
   const distance = dt * (dash > 0 ? 7.1 : 4.35)
   position.addScaledVector(move, distance)
+  hasMoved = true
   stride += distance * 4
 }
 
@@ -146,7 +149,8 @@ function pressure() {
 }
 
 function timingWindow() {
-  return clamp(0.14 - basketDistance() * 0.007 - pressure() * 0.047, 0.052, 0.14)
+  const range = clamp(basketDistance() / 11, 0, 1)
+  return THREE.MathUtils.lerp(0.235, 0.045, range) * (1 - pressure() * 0.34)
 }
 
 function shoot() {
@@ -161,9 +165,15 @@ function shoot() {
   target.z += Math.sign(error) * miss * 0.38
   const time = distance < layupRange ? 0.76 : clamp(0.83 + distance * 0.078, 0.94, 1.56)
   if (defend === "guard" && space() < 1.64 && defendCooldown <= 0) beginDefense("block")
+  const position = player.root.position
+  const defender = robot.root.position
+  toRim.set(-position.x, 0, rim.z - position.z).normalize()
+  delta.set(defender.x - position.x, 0, defender.z - position.z)
+  const smothered = defend === "block" && defendTime < 0.54 &&
+    delta.length() < 1.28 && toRim.dot(delta.normalize()) > 0.45
   const velocity = target.sub(ball.position).divideScalar(time)
   velocity.y += gravity * time / 2
-  shot = { origin: ball.position.clone(), velocity, time: 0, points, made: false, blocked: false }
+  shot = { origin: ball.position.clone(), velocity, time: 0, points, smothered, made: false, blocked: false }
   attempts++
   phase = "flight"
   airborne = 0.48
@@ -200,7 +210,7 @@ function updateRobot(dt) {
     if (delta.lengthSq() > 0.00001) position.addScaledVector(delta, Math.min(1, (charge ? 2.25 : 3.45) * dt / delta.length()))
     if (defendCooldown <= 0) {
       if (charge > 0.21 && space() < 1.72) beginDefense("block")
-      else if (!charge && space() < 1.24) beginDefense("steal")
+      else if (hasMoved && !charge && space() < 1.24) beginDefense("steal")
     }
   } else if (defend === "steal") {
     if (defendTime >= 0.32 && defendTime < 0.48) {
@@ -267,10 +277,11 @@ function updateFlight(dt) {
   shot.time += dt
   ball.position.copy(shot.origin).addScaledVector(shot.velocity, shot.time)
   ball.position.y -= 0.5 * gravity * shot.time ** 2
-  if (!shot.blocked && !shot.made && shot.time < 0.38 &&
-      defend === "block" && defendTime > 0.14 && defendTime < 0.58) {
+  const inReach = defend === "block" && defendTime > 0.14 && defendTime < 0.58
+  if (!shot.blocked && !shot.made && shot.time < 0.38 && (shot.smothered || inReach)) {
     segment.set(previousBall, ball.position)
-    const touched = robot.hands.some((hand) => {
+    closest.copy(previousBall)
+    const touched = shot.smothered || robot.hands.some((hand) => {
       hand.getWorldPosition(robotHand)
       segment.closestPointToPoint(robotHand, true, closest)
       return closest.distanceTo(robotHand) < 0.53
@@ -278,6 +289,7 @@ function updateFlight(dt) {
     if (touched) {
       shot.blocked = true
       shot.origin.copy(closest)
+      ball.position.copy(closest)
       shot.time = 0
       shot.velocity.set(robot.root.position.x > ball.position.x ? -2 : 2, 0.8, 1.8)
       ui.callout.textContent = "被封盖"
