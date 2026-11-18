@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <title>New game</title>
+    <title>半场单挑</title>
     <link rel="stylesheet" href="./style.css" />
 
     <!--
@@ -39,12 +39,32 @@
     </script>
   </head>
   <body>
-    <!--
-      The holding screen a new sandbox serves until the agent writes a real game
-      over it. It exists so the preview has something to show on the very first
-      load, before the first turn has produced any code — and it is built on the
-      same `./engine/` modules a game is, as a worked example of them.
-    -->
-    <script type="module" src="./welcome.js"></script>
+    <main id="arena" aria-label="半场篮球场"></main>
+    <header class="scoreboard" aria-label="比分板">
+      <h1>半场单挑</h1>
+      <div><span>得分</span><strong id="score">0</strong></div>
+      <div><span>回合</span><strong id="round">1 / 10</strong></div>
+      <div><span>进攻时间</span><strong id="clock">12.0</strong></div>
+      <div><span>命中率</span><strong id="accuracy">—</strong></div>
+    </header>
+    <div id="callout" role="status"></div>
+    <div id="meter" hidden aria-label="投篮时机">
+      <span id="shot-type"></span>
+      <div class="track"><i class="green"></i><i id="needle"></i></div>
+    </div>
+    <section id="menu">
+      <div>
+        <h2 id="menu-title">挑战陪练机器人</h2>
+        <p id="summary">10 个进攻回合，每回合 12 秒。拉开空间，在绿色区域松开空格出手。</p>
+        <button id="start" type="button">开始挑战</button>
+      </div>
+    </section>
+    <footer><span><kbd>WASD</kbd> 移动</span><span><kbd>Shift</kbd> 冲刺</span><span><kbd>空格</kbd> 按住起跳 · 松开投篮</span><span><kbd>R</kbd> 重开</span></footer>
+    <div class="touch-controls">
+      <span>左半屏拖动</span>
+      <button id="dash" type="button">冲刺</button>
+      <button id="shoot" type="button">投篮</button>
+    </div>
+    <script type="module" src="./basketball.js"></script>
   </body>
 </html>

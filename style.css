@@ -1,107 +1,71 @@
-/* The page the game is played in.
-
-   Kept in its own file so a new sandbox is seeded with the layout the agent is
-   told to grow into — markup, styles and scripts side by side in the game
-   directory. The rules here are the ones every 3D game in a browser needs: a
-   canvas that fills the viewport exactly, nothing that scrolls, and a body that
-   HUD overlays can position themselves against. */
-
 :root {
   color-scheme: dark;
-  --ink: #0a0a0a;
-  --snow: #ededed;
-  --mist: #a1a1a1;
-  --ember: #ea580c;
-  --amber: #fb923c;
+  font-family: system-ui, sans-serif;
+  color: #fff7e9;
+  background: #101820;
+  font-variant-numeric: tabular-nums;
 }
 
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  /* The HUD's children are absolutely positioned against the body, so it has to
-     be a containing block. Without this they escape to the viewport and drift
-     out of place the moment the page has any other layout. */
-  position: relative;
-  /* A canvas sized to the viewport still overflows it by a pixel or two on some
-     browsers, and the resulting scrollbar changes the size, which resizes the
-     canvas, which brings the scrollbar back. */
-  overflow: hidden;
-  background: var(--ink);
-  color: var(--snow);
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Helvetica,
-    Arial,
-    sans-serif;
-  /* A game is dragged and tapped, not selected — without this every drag
-     highlights the HUD text and every double tap zooms the game away. */
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: none;
-  /* No padding here on purpose: the engine sizes the canvas from this element's
-     box, so padding would leave the render buffer a different shape from the
-     area it is stretched over. Notch insets are handled in the HUD instead. */
-}
-
-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-/* The welcome screen's own text. A game replacing this page can delete it. */
-.welcome {
+* { box-sizing: border-box; }
+body { margin: 0; height: 100dvh; overflow: hidden; touch-action: none; user-select: none; }
+#arena { position: absolute; inset: 0; }
+.scoreboard {
   position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: clamp(10px, 3vw, 34px);
+  padding: 12px clamp(12px, 3vw, 26px);
+  border: 1px solid #52616b;
+  border-radius: 12px;
+  background: #101820f2;
+  white-space: nowrap;
+}
+.scoreboard h1 { font-size: clamp(12px, 2.6vw, 20px); margin: 0; color: #ffbc73; }
+.scoreboard div { display: grid; text-align: center; gap: 3px; }
+.scoreboard span { font-size: 11px; color: #bccbd0; }
+.scoreboard strong { font-size: clamp(13px, 2.3vw, 20px); }
+#clock.urgent { color: #ff8d7b; }
+#callout {
+  position: absolute;
+  top: 24%;
   left: 0;
-  right: 0;
-  bottom: clamp(28px, 8vh, 72px);
-  z-index: 10;
-  pointer-events: none;
+  width: 100%;
   text-align: center;
-  padding: 0 24px;
-  animation: welcome-in 900ms 300ms both cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
+  font-size: clamp(18px, 3vw, 30px);
+  font-weight: 850;
+  text-shadow: 0 2px 8px #000, 0 1px 3px #000;
 }
-
-.welcome h1 {
-  margin: 0 0 0.5rem;
-  font-size: clamp(1.5rem, 4vw, 2.25rem);
-  font-weight: 650;
-  letter-spacing: -0.02em;
+#meter {
+  position: absolute;
+  bottom: 16%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(220px, 52vw);
+  text-align: center;
+  font-weight: 700;
+  text-shadow: 0 2px 5px #000;
+  pointer-events: none;
 }
-
-.welcome p {
-  margin: 0;
-  color: var(--mist);
-  font-size: clamp(0.8125rem, 2vw, 0.9375rem);
-}
-
-@keyframes welcome-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/* Someone reading this in a reduced-motion setting still gets the page; the
-   cube's own spin is slowed in welcome.js rather than here. */
-@media (prefers-reduced-motion: reduce) {
-  .welcome {
-    animation: none;
-  }
+.track { position: relative; margin-top: 6px; height: 15px; background: #101820; border: 2px solid #fff; border-radius: 8px; overflow: hidden; }
+.green { position: absolute; inset-block: 0; background: #64e49e; }
+#needle { position: absolute; top: 0; height: 100%; width: 4px; margin-left: -2px; background: white; }
+#menu { position: absolute; inset: 0; display: grid; place-items: center; background: #10182052; padding: 18px; }
+#menu[hidden] { display: none; }
+#menu > div { width: min(420px, 100%); background: #101820f5; border: 1px solid #52616b; padding: 26px; border-radius: 14px; box-shadow: 0 12px 44px #0008; }
+h2 { margin: 0; font-size: 25px; }
+p { line-height: 1.65; color: #cbd6db; }
+button { border: 0; border-radius: 8px; background: #ffbc73; color: #17130e; font: inherit; font-weight: 800; padding: 10px 18px; cursor: pointer; touch-action: none; }
+footer { position: absolute; bottom: 16px; width: 100%; display: flex; justify-content: center; flex-wrap: wrap; gap: 10px 18px; font-size: 12px; text-shadow: 0 2px 3px #000; pointer-events: none; }
+kbd { background: #151e27; border: 1px solid #64727d; padding: 2px 5px; border-radius: 4px; }
+.touch-controls { display: none; }
+@media (pointer: coarse) {
+  footer { display: none; }
+  body:has(#menu[hidden]) .touch-controls { display: flex; }
+  .touch-controls { position: absolute; inset: auto 12px max(12px, env(safe-area-inset-bottom)); gap: 8px; align-items: center; pointer-events: none; }
+  .touch-controls span { margin-right: auto; font-size: 12px; text-shadow: 0 2px 4px #000; }
+  .touch-controls button { pointer-events: auto; }
 }
