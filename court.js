@@ -1,4 +1,5 @@
 import * as THREE from "three"
+import { createBasketNet } from "./net.js"
 
 export const court = { width: 14, length: 14, baseline: -7, rimZ: -5.65, rimY: 3.05, arc: 6.1 }
 const white = new THREE.MeshBasicMaterial({ color: "#fff2d8" })
@@ -64,18 +65,8 @@ export function buildCourt(scene) {
   const orange = matte("#f04c20")
   box(scene, orange, 0, rimY, -5.94, 0.12, 0.04, 0.19)
   mesh(scene, new THREE.TorusGeometry(0.245, 0.025, 10, 40), orange, 0, rimY, rimZ).rotation.x = Math.PI / 2
-  const net = []
-  for (let i = 0; i < 12; i++) {
-    const angle = i * Math.PI / 6
-    const top = [0.235 * Math.cos(angle), rimY, rimZ + 0.235 * Math.sin(angle)]
-    for (const turn of [-1, 1]) {
-      const end = angle + turn * Math.PI / 6
-      net.push(...top, 0.15 * Math.cos(end), rimY - 0.37, rimZ + 0.15 * Math.sin(end))
-    }
-  }
-  const netGeometry = new THREE.BufferGeometry()
-  netGeometry.setAttribute("position", new THREE.Float32BufferAttribute(net, 3))
-  scene.add(new THREE.LineSegments(netGeometry, new THREE.LineBasicMaterial({ color: "#ffffff" })))
+  const net = createBasketNet(rimY, rimZ)
+  scene.add(net.mesh)
 
   const seat = matte("#36515d")
   for (const side of [-1, 1]) {
@@ -91,6 +82,7 @@ export function buildCourt(scene) {
   sun.shadow.mapSize.set(1024, 1024)
   sun.shadow.normalBias = 0.035
   scene.add(sun)
+  return net
 }
 
 function joint(parent, x, y, z = 0) {

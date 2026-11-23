@@ -22,7 +22,7 @@ const input = createInput({
     camera: ["KeyV"],
   },
 })
-buildCourt(engine.scene)
+const net = buildCourt(engine.scene)
 const player = makePlayer(engine.scene, false)
 const robot = makePlayer(engine.scene, true)
 const ball = makeBall(engine.scene)
@@ -52,6 +52,7 @@ const moveSide = new THREE.Vector3()
 const dribbleHand = new THREE.Vector3()
 const waypoint = new THREE.Vector3()
 const toRim = new THREE.Vector3()
+const netPreviousBall = new THREE.Vector3()
 const previousBall = new THREE.Vector3()
 const robotHand = new THREE.Vector3()
 const viewDirection = new THREE.Vector3(0, 0, -1)
@@ -625,6 +626,8 @@ prepareRound()
 engine.onUpdate((dt, elapsed) => {
   if (input.pressed("camera")) setCameraMode(!firstPerson)
   if (input.pressed("restart")) startMatch()
+  const ballInFlight = phase === "flight" || phase === "dunk"
+  if (ballInFlight) netPreviousBall.copy(ball.position)
   if (phase === "play") updatePlay(dt, elapsed)
   else if (phase === "dunk") updateDunk(dt, elapsed)
   else if (phase === "flight") {
@@ -636,6 +639,7 @@ engine.onUpdate((dt, elapsed) => {
     resultTime -= dt
     if (resultTime <= 0) nextRound()
   }
+  net.update(dt, netPreviousBall, ballInFlight ? ball.position : null)
   const dunkReady = phase === "play" && canDunk()
   ui["dunk-hint"].hidden = !dunkReady
   ui.shoot.textContent = dunkReady ? "扣篮" : "投篮"
