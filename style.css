@@ -30,7 +30,7 @@ body { margin: 0; height: 100dvh; overflow: hidden; touch-action: none; user-sel
 #clock.urgent { color: #ff8d7b; }
 #callout {
   position: absolute;
-  top: 24%;
+  top: max(88px, 14%);
   left: 0;
   width: 100%;
   text-align: center;
@@ -68,4 +68,9 @@ kbd { background: #151e27; border: 1px solid #64727d; padding: 2px 5px; border-r
   .touch-controls { position: absolute; inset: auto 12px max(12px, env(safe-area-inset-bottom)); gap: 8px; align-items: center; pointer-events: none; }
   .touch-controls span { margin-right: auto; font-size: 12px; text-shadow: 0 2px 4px #000; }
   .touch-controls button { pointer-events: auto; }
+}
+
+@media (pointer: coarse) {
+  .touch-controls { flex-wrap: wrap; justify-content: flex-end; }
+  .touch-controls button { padding-inline: clamp(9px, 3vw, 18px); }
 }

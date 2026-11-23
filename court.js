@@ -15,14 +15,6 @@ function box(parent, material, x, y, z, w, h, d) {
   return mesh(parent, new THREE.BoxGeometry(w, h, d), material, x, y, z)
 }
 
-function tube(parent, material, from, to, radius) {
-  const delta = to.clone().sub(from)
-  const center = from.clone().addScaledVector(delta, 0.5)
-  const object = mesh(parent, new THREE.CylinderGeometry(radius, radius, delta.length(), 8), material, ...center)
-  object.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize())
-  return object
-}
-
 function ring(parent, material, x, y, z, radius, width, start = 0, sweep = Math.PI * 2) {
   const geometry = new THREE.RingGeometry(radius - width / 2, radius + width / 2, 64, 1, start, sweep)
   mesh(parent, geometry, material, x, y, z).rotation.x = -Math.PI / 2
@@ -101,50 +93,110 @@ export function buildCourt(scene) {
   scene.add(sun)
 }
 
+function joint(parent, x, y, z = 0) {
+  const object = new THREE.Group()
+  object.position.set(x, y, z)
+  parent.add(object)
+  return object
+}
+
+function oval(parent, material, x, y, z, width, height, depth) {
+  const object = mesh(parent, new THREE.SphereGeometry(1, 20, 14), material, x, y, z)
+  object.scale.set(width, height, depth)
+  return object
+}
+
+function profile(parent, material, x, y, z, points, depth) {
+  const geometry = new THREE.LatheGeometry(points.map(([radius, height]) => new THREE.Vector2(radius, height)), 24)
+  const object = mesh(parent, geometry, material, x, y, z)
+  object.scale.z = depth
+  return object
+}
+
+function jerseyNumber(parent, number) {
+  const canvas = document.createElement("canvas")
+  canvas.width = canvas.height = 128
+  const context = canvas.getContext("2d")
+  context.fillStyle = "#fff5db"
+  context.textAlign = "center"
+  context.textBaseline = "middle"
+  context.font = "bold 95px sans-serif"
+  context.fillText(number, 64, 66)
+  const map = new THREE.CanvasTexture(canvas)
+  map.colorSpace = THREE.SRGBColorSpace
+  const material = new THREE.MeshStandardMaterial({ map, transparent: true, alphaTest: 0.4 })
+  mesh(parent, new THREE.PlaneGeometry(0.24, 0.26), material, 0, 1.20, -0.164).rotation.y = Math.PI
+  mesh(parent, new THREE.PlaneGeometry(0.19, 0.21), material, 0, 1.21, 0.166)
+}
+
 export function makePlayer(scene, robot) {
   const root = new THREE.Group()
-  const uniform = matte(robot ? "#dd653e" : "#1260ab")
-  const shell = matte(robot ? "#33434e" : "#683f30")
-  const shoes = matte(robot ? "#192b36" : "#ecf4fc")
-  const tag = new THREE.MeshBasicMaterial({ color: robot ? "#fa9865" : "#75d7ff", side: THREE.DoubleSide })
-  const body = mesh(root, new THREE.CapsuleGeometry(0.265, 0.38, 5, 12), uniform, 0, 1.15, 0)
-  body.scale.z = 0.72
+  const rig = joint(root, 0, 0)
+  const torso = joint(rig, 0, 0)
+  const uniform = matte(robot ? "#b63a25" : "#17528e")
+  const shorts = matte(robot ? "#702317" : "#132d4a")
+  const trim = matte(robot ? "#ffbe63" : "#94daed")
+  const skin = matte(robot ? "#495861" : "#976044")
+  const hair = matte("#231b1a")
+  const shoes = matte(robot ? "#243039" : "#e8e9dd")
+  const sole = matte("#c4c8bf")
+  const tag = new THREE.MeshBasicMaterial({ color: robot ? "#fa9865" : "#75d7ff" })
+  const jersey = [[0, 0], [0.20, 0], [0.211, 0.10], [0.235, 0.25], [0.27, 0.41], [0.247, 0.49], [0.105, 0.53], [0, 0.53]]
+  profile(torso, uniform, 0, 0.88, 0, jersey, 0.61)
+  profile(torso, trim, 0, 0.88, 0, [[0.202, 0], [0.205, 0.035]], 0.63)
+  jerseyNumber(torso, robot ? "02" : "11")
+  oval(torso, skin, 0, 1.445, 0, 0.077, 0.11, 0.07)
+  oval(torso, skin, 0, 1.625, 0, 0.122, 0.165, 0.126)
+  oval(torso, skin, 0, 1.546, 0.048, 0.095, 0.076, 0.087)
   if (robot) {
-    box(root, shell, 0, 1.72, 0, 0.42, 0.33, 0.34)
-    box(root, tag, 0, 1.75, 0.177, 0.3, 0.062, 0.013)
+    oval(torso, hair, 0, 1.656, 0.075, 0.124, 0.052, 0.074)
+    for (const side of [-1, 1]) oval(torso, tag, side * 0.047, 1.658, 0.137, 0.027, 0.013, 0.009)
   } else {
-    mesh(root, new THREE.SphereGeometry(0.205, 16, 12), shell, 0, 1.72, 0)
-    mesh(root, new THREE.SphereGeometry(0.209, 16, 10, 0, Math.PI * 2, 0, 1.2), shoes, 0, 1.73, 0)
-    box(root, shoes, 0, 1.25, -0.196, 0.1, 0.19, 0.012)
+    const cap = mesh(torso, new THREE.SphereGeometry(1, 24, 14, 0, Math.PI * 2, 0, 1.57), hair, 0, 1.665, -0.013)
+    cap.scale.set(0.126, 0.127, 0.132)
+    oval(torso, skin, 0, 1.602, 0.122, 0.029, 0.039, 0.029)
+    for (const side of [-1, 1]) {
+      oval(torso, skin, side * 0.113, 1.612, 0, 0.022, 0.043, 0.029)
+      oval(torso, hair, side * 0.051, 1.643, 0.115, 0.025, 0.009, 0.012)
+    }
   }
-  const arms = []
-  const legs = []
-  const hands = []
-  for (const side of [-1, 1]) {
-    const arm = new THREE.Group()
-    arm.position.set(side * 0.285, 1.34, 0)
-    root.add(arm)
-    tube(arm, shell, new THREE.Vector3(), new THREE.Vector3(side * 0.11, -0.46, 0.055), 0.078)
-    mesh(arm, new THREE.SphereGeometry(0.09, 10, 8), shell, side * 0.11, -0.46, 0.055)
-    arms.push(arm)
-    const hand = new THREE.Object3D()
-    hand.position.set(side * 0.11, -0.46, 0.055)
-    arm.add(hand)
-    hands.push(hand)
 
-    const leg = new THREE.Group()
-    leg.position.set(side * 0.145, 0.81, 0)
-    root.add(leg)
-    box(leg, uniform, 0, -0.17, 0, 0.2, 0.39, 0.2)
-    box(leg, shell, 0, -0.51, 0, 0.13, 0.34, 0.14)
-    box(leg, shoes, 0, -0.745, 0.06, 0.19, 0.13, 0.31)
+  const arms = [], elbows = [], legs = [], knees = [], feet = [], hands = []
+  for (const side of [-1, 1]) {
+    const arm = joint(torso, side * 0.249, 1.357)
+    oval(arm, trim, 0, -0.015, 0, 0.083, 0.082, 0.079)
+    oval(arm, skin, 0, -0.128, 0, 0.063, 0.158, 0.067)
+    const elbow = joint(arm, 0, -0.255)
+    oval(elbow, skin, 0, -0.105, 0, 0.052, 0.144, 0.055)
+    const hand = joint(elbow, 0, -0.247, 0.011)
+    oval(hand, skin, 0, -0.029, 0, 0.048, 0.072, 0.031)
+    oval(hand, skin, -side * 0.037, -0.013, 0.019, 0.020, 0.041, 0.019)
+
+    const leg = joint(rig, side * 0.115, 0.90)
+    profile(leg, shorts, 0, 0, 0, [[0.112, -0.34], [0.121, -0.29], [0.133, -0.04], [0.128, 0.025]], 0.92)
+    oval(leg, skin, 0, -0.33, 0, 0.082, 0.13, 0.083)
+    const knee = joint(leg, 0, -0.404)
+    oval(knee, skin, 0, -0.139, 0, 0.070, 0.178, 0.077)
+    oval(knee, trim, 0, -0.348, 0, 0.062, 0.087, 0.067)
+    const foot = joint(knee, 0, -0.414)
+    oval(foot, sole, 0, -0.045, 0.060, 0.090, 0.025, 0.159)
+    oval(foot, shoes, 0, -0.015, 0.061, 0.086, 0.054, 0.148)
+    oval(foot, shoes, 0, 0.013, 0.002, 0.074, 0.074, 0.095)
+    for (let lace = 0; lace < 3; lace++) {
+      oval(foot, trim, 0, 0.041 - lace * 0.004, 0.059 + lace * 0.026, 0.056, 0.005, 0.008)
+    }
+    arms.push(arm)
+    elbows.push(elbow)
+    hands.push(hand)
     legs.push(leg)
+    knees.push(knee)
+    feet.push(foot)
   }
   root.traverse((object) => { if (object.isMesh) object.castShadow = true })
   const marker = new THREE.Group()
   ring(marker, tag, 0, 0.033, 0, 0.48, 0.046)
   scene.add(root, marker)
-  return { root, marker, arms, legs, hands }
+  return { root, rig, torso, marker, arms, elbows, legs, knees, feet, hands }
 }
 
 export function makeBall(scene) {
