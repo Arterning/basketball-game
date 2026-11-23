@@ -138,3 +138,7 @@ kbd { background: #151e27; border: 1px solid #64727d; padding: 2px 5px; border-r
   background: #8ee5ff;
   color: #142630;
 }
+
+@media (pointer: coarse) and (max-width: 420px) {
+  .touch-controls span { display: none; }
+}

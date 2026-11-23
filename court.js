@@ -1,7 +1,7 @@
 import * as THREE from "three"
 import { createBasketNet } from "./net.js"
 
-export const court = { width: 14, length: 14, baseline: -7, rimZ: -5.65, rimY: 3.05, arc: 6.1 }
+export const court = { width: 14, length: 14, baseline: -7, rimZ: -5.65, rimY: 3.05, arc: 6.1, dunkRange: 1.55, dunkBackEdge: 0.14 }
 const white = new THREE.MeshBasicMaterial({ color: "#fff2d8" })
 const matte = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.72 })
 
@@ -53,6 +53,24 @@ export function buildCourt(scene) {
   ring(scene, white, 0, 0.018, -1.7, 1.72, 0.045, Math.PI, Math.PI)
   ring(scene, white, 0, 0.018, 7, 1.55, 0.05, 0, Math.PI)
 
+  const { dunkRange, dunkBackEdge } = court
+  const edgeAngle = Math.asin(dunkBackEdge / dunkRange)
+  const start = Math.PI - edgeAngle
+  const sweep = Math.PI + 2 * edgeAngle
+  const outline = new THREE.MeshBasicMaterial({ color: "#ffbd6e", toneMapped: false })
+  const fill = new THREE.MeshBasicMaterial({
+    color: "#ff9b42", transparent: true, opacity: 0.27, depthWrite: false,
+  })
+  const shape = new THREE.Shape()
+  shape.absarc(0, 0, dunkRange, start, start + sweep)
+  shape.closePath()
+  const zone = mesh(scene, new THREE.ShapeGeometry(shape, 40), fill, 0, 0.014, rimZ)
+  zone.rotation.x = -Math.PI / 2
+  zone.name = "dunk-zone"
+  ring(scene, outline, 0, 0.019, rimZ, dunkRange, 0.045, start, sweep)
+  const edgeWidth = 2 * Math.sqrt(dunkRange ** 2 - dunkBackEdge ** 2)
+  box(scene, outline, 0, 0.019, rimZ - dunkBackEdge, edgeWidth, 0.004, 0.045)
+
   const steel = matte("#35525e")
   box(scene, steel, 0, 1.81, -7.65, 0.22, 3.62, 0.22)
   box(scene, steel, 0, 3.51, -6.95, 0.14, 0.14, 1.45)
@@ -82,7 +100,7 @@ export function buildCourt(scene) {
   sun.shadow.mapSize.set(1024, 1024)
   sun.shadow.normalBias = 0.035
   scene.add(sun)
-  return net
+  return { net, dunkZone: zone }
 }
 
 function joint(parent, x, y, z = 0) {
