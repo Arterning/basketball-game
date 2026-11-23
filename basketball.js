@@ -66,6 +66,7 @@ const stealReachDuration = 0.18
 const palmRadius = 0.055
 const ballRadius = 0.12
 const postStepDuration = 0.22
+const postBounceRate = 8.2
 const fakeDuration = 0.28
 const waypoint = new THREE.Vector3()
 const toRim = new THREE.Vector3()
@@ -276,6 +277,7 @@ function updatePost(dt, elapsed) {
       return false
     }
     finishCrossover(elapsed, true)
+    bounceStarted = elapsed
     dash = 0
     if (defend === "steal") defend = "guard"
     post = { time: 0, distance: 0, queued: false }
@@ -624,6 +626,7 @@ function pose(dt, elapsed = 0) {
     : airborne * 0.8
   const dunkLift = dunk ? Math.sin(Math.PI * dunk.time / dunkDuration) : 0
   if (dunk) player.root.position.y = 1.28 * dunkLift
+  const postBounce = post ? Math.abs(Math.cos((elapsed - bounceStarted) * postBounceRate)) : 0
   const postEffort = post ? Math.sin(Math.PI * post.time / postStepDuration) : 0
   const playerAngle = player.root.rotation.y
   const lateralDrive = playerVelocity.x * Math.cos(playerAngle) - playerVelocity.z * Math.sin(playerAngle)
@@ -666,7 +669,7 @@ function pose(dt, elapsed = 0) {
     if (post) {
       player.legs[i].rotation.x = -0.60 + step * postEffort * 0.33
       player.knees[i].rotation.x = 1.10 + postEffort * 0.24
-      player.arms[i].rotation.x = handOnBall ? -0.70 : -0.36
+      player.arms[i].rotation.x = handOnBall ? -0.54 - 0.16 * postBounce : -0.36
       player.arms[i].rotation.z = side * 0.33
     }
 
@@ -723,7 +726,7 @@ function updateHeldBall(elapsed) {
     ball.position.y += 0.065
     return
   }
-  if (!dribble && isProtectingBall()) {
+  if (!post && !dribble && isProtectingBall()) {
     ball.position.y += 0.045
     return
   }
@@ -738,7 +741,7 @@ function updateHeldBall(elapsed) {
       ? THREE.MathUtils.lerp(crossover.height, 0.13, progress * 2)
       : THREE.MathUtils.lerp(0.13, dribbleHand.y, progress * 2 - 1)
   } else {
-    const bounce = Math.abs(Math.cos((elapsed - bounceStarted) * 6.8))
+    const bounce = Math.abs(Math.cos((elapsed - bounceStarted) * (post ? postBounceRate : 6.8)))
     ball.position.y = THREE.MathUtils.lerp(0.13, ball.position.y, bounce)
   }
 }
