@@ -60,6 +60,10 @@ const moveForward = new THREE.Vector3()
 const moveSide = new THREE.Vector3()
 const dribbleHand = new THREE.Vector3()
 const crossoverDuration = 0.18
+const stealWindup = 0.32
+const stealEnd = 0.50
+const palmRadius = 0.055
+const ballRadius = 0.12
 const postStepDuration = 0.22
 const fakeDuration = 0.28
 const waypoint = new THREE.Vector3()
@@ -67,6 +71,12 @@ const toRim = new THREE.Vector3()
 const netPreviousBall = new THREE.Vector3()
 const previousBall = new THREE.Vector3()
 const robotHand = new THREE.Vector3()
+const previousPalm = new THREE.Vector3()
+const previousDribbleBall = new THREE.Vector3()
+const handAim = new THREE.Vector3()
+const downArm = new THREE.Vector3(0, -1, 0)
+const reachRotation = new THREE.Quaternion()
+const contactOrigin = new THREE.Vector3()
 const viewDirection = new THREE.Vector3(0, 0, -1)
 const cameraGoal = new THREE.Vector3()
 const look = new THREE.Vector3()
@@ -87,7 +97,6 @@ let charge = 0
 let airborne = 0
 let fake = 0
 let fakeCooldown = 0
-let hasMoved = false
 let stride = 0
 let robotStride = 0
 let dash = 0
@@ -95,6 +104,7 @@ let dashCooldown = 0
 let defend = "guard"
 let defendTime = 0
 let stealEvaded = false
+let stealHand = 0
 let defendCooldown = 0
 let recovery = 0
 let resultTime = 0
@@ -134,7 +144,6 @@ function prepareRound() {
   defendTime = defendCooldown = recovery = 0
   defend = "guard"
   stealEvaded = false
-  hasMoved = false
   dribble = null
   dribbleCooldown = 0
   ballSide = 1
@@ -291,7 +300,6 @@ function updatePost(dt, elapsed) {
     playerPos.addScaledVector(toRim, step)
     defender.addScaledVector(toRim, step)
     playerVelocity.copy(toRim).multiplyScalar(step / dt)
-    hasMoved = true
     stride += step * 5
     robotStride += step * 7
   }
@@ -333,7 +341,6 @@ function advancePlayer(dt, elapsed) {
   if (!dribble) updateCrossover(elapsed)
   if (move.lengthSq() < 0.001) return
   player.root.position.addScaledVector(playerVelocity, dt)
-  hasMoved = true
   stride += playerVelocity.length() * dt * 4.8
 }
 
@@ -445,11 +452,47 @@ function shoot() {
   refreshScore()
 }
 
+function isProtectingBall() {
+  return Boolean(post) || (!crossover && playerVelocity.lengthSq() <= 0.1)
+}
+
+function canStealDribble() {
+  return !charge && !fake && !dribble && !isProtectingBall()
+}
+
+function getPalm(index, target) {
+  return robot.hands[index].localToWorld(target.set(0, -0.029, 0))
+}
+
+function resolveSteal(dt) {
+  if (defend !== "steal" || defendTime < stealWindup) return
+
+  if (dt > 0 && defendTime - dt < stealEnd && canStealDribble() && !stealEvaded) {
+    // Sweep the palm relative to the moving ball to keep fast contacts between frames.
+    getPalm(stealHand, robotHand).sub(ball.position)
+    previousPalm.sub(previousDribbleBall)
+    robotHand.lerp(previousPalm, clamp((defendTime - stealEnd) / dt, 0, 1))
+    previousPalm.lerp(robotHand, clamp((stealWindup - defendTime + dt) / dt, 0, 1))
+    segment.set(previousPalm, robotHand).closestPointToPoint(contactOrigin, true, closest)
+    if (closest.lengthSq() <= (ballRadius + palmRadius) ** 2) {
+      recover(0.68)
+      finishRound("被抢断")
+      return
+    }
+  }
+  if (defendTime >= stealEnd) {
+    recover(0.68)
+    if (!charge && !fake) ui.callout.textContent = stealEvaded ? "转身躲过抢断" : "抢断落空"
+  }
+}
+
 function beginDefense(action) {
   defend = action
   defendTime = 0
   if (action === "steal") {
     stealEvaded = false
+    stealHand = getPalm(0, robotHand).distanceToSquared(ball.position) <=
+      getPalm(1, previousPalm).distanceToSquared(ball.position) ? 0 : 1
     ui.callout.textContent = "机器人准备抢断"
   }
 }
@@ -473,9 +516,10 @@ function updateRobot(dt) {
     face(robot, playerPos.x, playerPos.z)
     return
   }
+  if (phase !== "play" && defend === "steal") recover(0.68)
   const oldX = position.x
   const oldZ = position.z
-  const windingUp = defend === "steal" && defendTime < 0.32
+  const windingUp = defend === "steal" && defendTime < stealWindup
   if (phase === "play" && ((defend === "guard" && recovery <= 0) || windingUp)) {
     toRim.set(-playerPos.x, 0, rim.z - playerPos.z).normalize()
     delta.set(position.x - playerPos.x, 0, position.z - playerPos.z)
@@ -494,7 +538,7 @@ function updateRobot(dt) {
       if (bites || (charge > 0.21 && space() < 1.72 * difficulty.armLength)) {
         beginDefense("block")
         if (bites) ui.callout.textContent = "骗起防守！"
-      } else if (hasMoved && !charge && !fake && !dribble && space() < 1.24) {
+      } else if (canStealDribble() && space() < 1.24) {
         beginDefense("steal")
       }
     }
@@ -503,19 +547,9 @@ function updateRobot(dt) {
     robotVelocity.multiplyScalar(Math.exp(-12 * dt))
   }
   if (defend === "steal") {
-    if (defendTime >= 0.32 && defendTime < 0.48) {
+    if (defendTime >= stealWindup && defendTime <= stealEnd) {
       delta.set(ball.position.x - position.x, 0, ball.position.z - position.z)
       position.addScaledVector(delta.normalize(), 2.2 * difficulty.speed * dt)
-    }
-    if (defendTime >= 0.48) {
-      const reach = Math.hypot(ball.position.x - position.x, ball.position.z - position.z)
-      recover(0.68)
-      const shielding = stealEvaded
-      if (phase === "play" && charge === 0 && reach < 0.92 && dash <= 0 && !shielding) {
-        finishRound("被抢断")
-      } else if (phase === "play") {
-        ui.callout.textContent = shielding ? "转身躲过抢断" : "抢断落空"
-      }
     }
   } else if (defend === "block") {
     if (defendTime >= 0.72) {
@@ -542,6 +576,7 @@ function updateRobot(dt) {
 function pose(dt, elapsed = 0) {
   const running = phase === "play" && playerVelocity.lengthSq() > 0.1
   const shooting = charge > 0 || airborne > 0
+  const protecting = !shooting && !fake && !dunk && !dribble && isProtectingBall()
   const progress = dribble ? clamp(dribble.time / dribble.duration, 0, 1) : 0
   const dribblingHand = dribble && progress > 0.45 ? dribble.toHand : ballSide
   const fakeLift = fake ? Math.sin(Math.PI * fake / fakeDuration) : 0
@@ -572,6 +607,12 @@ function pose(dt, elapsed = 0) {
     player.arms[i].rotation.x = shooting ? -2.24 : handOnBall ? -0.57 - 0.20 * Math.cos(elapsed * 13) : -0.35 - step * 0.22
     player.arms[i].rotation.z = shooting ? side * 0.06 : side * (handOnBall ? 0.23 : 0.35)
     player.elbows[i].rotation.x = shooting ? -0.40 - 0.20 * (airborne > 0) : handOnBall ? -0.38 : -0.51
+
+    if (protecting && handOnBall) {
+      player.arms[i].rotation.x = post ? -0.56 : 0.63
+      player.arms[i].rotation.z = side * 0.32
+      player.elbows[i].rotation.x = -0.55
+    }
 
     if (fake) {
       player.arms[i].rotation.x = -0.45 - fakeLift * 1.85
@@ -611,10 +652,16 @@ function pose(dt, elapsed = 0) {
     robot.knees[i].rotation.x = jumping ? 0.23 : 0.58 + Math.max(0, side * shuffle) * 0.22
     robot.feet[i].rotation.x = -(robot.legs[i].rotation.x + robot.knees[i].rotation.x) * 0.68
     robot.arms[i].rotation.x = defend === "block" ? (jumping ? -2.42 : -1.1)
-      : defend === "steal" ? (defendTime >= 0.32 ? -1.37 : -0.58) : -0.35
+      : defend === "steal" ? (defendTime >= stealWindup ? -1.37 : -0.58) : -0.35
     if (post) robot.arms[i].rotation.x = -0.72 - 0.30 * postEffort
     robot.arms[i].rotation.z = side * (defend === "block" ? 0.17 : 0.45)
-    robot.elbows[i].rotation.x = defend === "block" ? -0.19 : defend === "steal" && defendTime >= 0.32 ? -0.15 : -0.52
+    robot.elbows[i].rotation.x = defend === "block" ? -0.19 : defend === "steal" && defendTime >= stealWindup ? -0.15 : -0.52
+    if (defend === "steal" && i === stealHand && defendTime >= stealWindup) {
+      const arm = robot.arms[i]
+      robot.torso.worldToLocal(handAim.copy(ball.position)).sub(arm.position).normalize()
+      reachRotation.setFromUnitVectors(downArm, handAim)
+      arm.quaternion.slerp(reachRotation, THREE.MathUtils.smoothstep(defendTime, stealWindup, 0.40))
+    }
   }
   player.marker.scale.setScalar(dash > 0 && phase === "play" ? 1.22 : 1)
   player.marker.position.set(player.root.position.x, 0, player.root.position.z)
@@ -626,6 +673,10 @@ function updateHeldBall(elapsed) {
   hand.getWorldPosition(ball.position)
   if (charge || fake) {
     ball.position.y += 0.065
+    return
+  }
+  if (!dribble && isProtectingBall()) {
+    ball.position.y += 0.045
     return
   }
   if (crossover) {
@@ -684,6 +735,8 @@ function updateFlight(dt) {
 }
 
 function updatePlay(dt, elapsed) {
+  previousDribbleBall.copy(ball.position)
+  if (defend === "steal") getPalm(stealHand, previousPalm)
   remaining = Math.max(0, remaining - dt)
   ui.clock.textContent = timestamp()
   ui.clock.classList.toggle("urgent", remaining < 4)
@@ -735,6 +788,7 @@ function updatePlay(dt, elapsed) {
   updateRobot(dt)
   pose(dt, elapsed)
   updateHeldBall(elapsed)
+  resolveSteal(dt)
   if (phase !== "play") return
   if (Math.abs(position.x) > court.width / 2 || Math.abs(position.z) > court.length / 2) {
     finishRound("出界")
