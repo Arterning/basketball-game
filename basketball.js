@@ -5,7 +5,7 @@ import { buildCourt, court, makeBall, makePlayer } from "./court.js"
 
 const ui = Object.fromEntries(
   ["arena", "score", "round", "clock", "accuracy", "callout", "meter", "needle",
-    "shot-type", "menu", "menu-title", "summary", "difficulty", "start", "dash", "dash-key", "shoot", "cross", "spin", "first-person", "third-person"]
+    "shot-type", "dunk-hint", "menu", "menu-title", "summary", "difficulty", "start", "dash", "dash-key", "shoot", "cross", "spin", "first-person", "third-person"]
     .map((id) => [id, document.getElementById(id)])
 )
 const engine = createEngine({
@@ -39,6 +39,9 @@ const maxCharge = 0.94
 const ideal = 0.57
 const gravity = 10.5
 const layupRange = 1.9
+const dunkRange = 1.55
+const dunkRelease = 0.38
+const dunkDuration = 0.81
 const rim = new THREE.Vector3(0, court.rimY, court.rimZ)
 const move = new THREE.Vector3()
 const dashDirection = new THREE.Vector3()
@@ -81,6 +84,7 @@ let defendCooldown = 0
 let recovery = 0
 let resultTime = 0
 let shot = null
+let dunk = null
 let dribble = null
 let dribbleCooldown = 0
 let ballSide = -1
@@ -114,7 +118,8 @@ function prepareRound() {
   chasing = false
   playerVelocity.set(0, 0, 0)
   robotVelocity.set(0, 0, 0)
-  shot = null
+  shot = dunk = null
+  ui["dunk-hint"].hidden = true
   const x = [0, -2.8, 2.8][(round - 1) % 3]
   player.root.position.set(x, 0, 1.8)
   robot.root.position.set(x * 0.72, 0, -0.65)
@@ -237,6 +242,63 @@ function timingWindow() {
   return THREE.MathUtils.lerp(0.155, 0.032, range) * (1 - pressure() * 0.34) * difficulty.shotWindow
 }
 
+function canDunk() {
+  return !charge && !dribble && basketDistance() <= dunkRange &&
+    player.root.position.z >= rim.z - 0.14
+}
+
+function startDunk() {
+  const origin = player.root.position.clone()
+  const direction = origin.clone().sub(rim).setY(0)
+  if (direction.lengthSq() < 0.01) direction.set(0, 0, 1)
+  const landing = rim.clone().setY(0).addScaledVector(direction.normalize(), 0.53)
+  dunk = { origin, landing, time: 0, hand: ballSide < 0 ? 0 : 1, made: false }
+  phase = "dunk"
+  attempts++
+  dash = 0
+  ui["dunk-hint"].hidden = true
+  ui.callout.textContent = "起跳扣篮"
+  refreshScore()
+}
+
+function registerBasket(points, message) {
+  makes++
+  score += points
+  ui.callout.textContent = message
+  refreshScore()
+}
+
+function updateDunk(dt, elapsed) {
+  dunk.time = Math.min(dunkDuration, dunk.time + dt)
+  const progress = dunk.time / dunkDuration
+  const approach = THREE.MathUtils.smoothstep(dunk.time, 0, dunkRelease)
+  player.root.position.copy(dunk.origin).lerp(dunk.landing, approach)
+  face(player, 0, rim.z)
+  updateRobot(dt)
+  pose(dt, elapsed)
+
+  if (dunk.time < dunkRelease) {
+    player.hands[dunk.hand].getWorldPosition(ball.position)
+    ball.position.y += 0.08
+    look.copy(rim)
+    look.y += 0.18
+    ball.position.lerp(look, THREE.MathUtils.smoothstep(progress, 0.25, dunkRelease / dunkDuration))
+  } else {
+    const fall = dunk.time - dunkRelease
+    ball.position.copy(rim)
+    ball.position.y = Math.max(0.12, rim.y + 0.18 - 4.9 * fall - 0.5 * gravity * fall ** 2)
+    if (!dunk.made && ball.position.y <= rim.y) {
+      dunk.made = true
+      registerBasket(2, "扣篮！ +2")
+    }
+  }
+
+  if (dunk.time >= dunkDuration) {
+    dunk = null
+    finishRound("扣篮！ +2")
+  }
+}
+
 function shoot() {
   const error = charge - ideal
   const distance = basketDistance()
@@ -351,6 +413,8 @@ function pose(dt, elapsed = 0) {
   player.root.position.y = charge
     ? 0.48 * Math.sin(Math.PI * clamp((charge - 0.12) / 0.99, 0, 1))
     : airborne * 0.8
+  const dunkLift = dunk ? Math.sin(Math.PI * dunk.time / dunkDuration) : 0
+  if (dunk) player.root.position.y = 1.28 * dunkLift
   player.rig.position.y = -0.10 * crouch
   player.torso.rotation.x = 0.20 * crouch
   player.torso.rotation.z = dribble?.kind === "cross" ? dribble.side * Math.sin(progress * Math.PI * 2) * 0.28 : 0
@@ -369,6 +433,16 @@ function pose(dt, elapsed = 0) {
     player.arms[i].rotation.x = shooting ? -2.24 : handOnBall ? -0.57 - 0.20 * Math.cos(elapsed * 13) : -0.35 - step * 0.22
     player.arms[i].rotation.z = shooting ? side * 0.06 : side * (handOnBall ? 0.23 : 0.35)
     player.elbows[i].rotation.x = shooting ? -0.40 - 0.20 * (airborne > 0) : handOnBall ? -0.38 : -0.51
+
+    if (dunk) {
+      const raise = THREE.MathUtils.smoothstep(dunk.time, 0, 0.25) *
+        (1 - THREE.MathUtils.smoothstep(dunk.time, dunkRelease, 0.69))
+      player.legs[i].rotation.x = -dunkLift * (dunk.hand === i ? 0.9 : 0.28)
+      player.knees[i].rotation.x = dunkLift * (dunk.hand === i ? 0.75 : 1.15)
+      player.arms[i].rotation.x = -0.48 - raise * (dunk.hand === i ? 2.28 : 0.75)
+      player.arms[i].rotation.z = side * (dunk.hand === i ? 0.1 : 0.45)
+      player.elbows[i].rotation.x = dunk.hand === i ? -0.22 : -0.65
+    }
 
     const shuffle = shuffling ? Math.sin(robotStride) : 0
     robot.legs[i].rotation.x = jumping ? -0.13 : -0.28 + (chasing ? side * shuffle * 0.54 : 0)
@@ -432,10 +506,7 @@ function updateFlight(dt) {
     closest.copy(previousBall).lerp(ball.position, fraction)
     if (closest.distanceTo(rim) < 0.119) {
       shot.made = true
-      makes++
-      score += shot.points
-      ui.callout.textContent = "进球！ +" + shot.points
-      refreshScore()
+      registerBasket(shot.points, "进球！ +" + shot.points)
     }
   }
 
@@ -462,7 +533,11 @@ function updatePlay(dt, elapsed) {
       player.root.rotation.y -= dribble.side * progress * Math.PI * 2
     }
   }
-  if (!charge && !dribble && input.pressed("jump")) {
+  if (!charge && !dribble && input.pressed("jump") && remaining > 0) {
+    if (canDunk()) {
+      startDunk()
+      return
+    }
     charge = Number.EPSILON
     dash = 0
   }
@@ -551,6 +626,7 @@ engine.onUpdate((dt, elapsed) => {
   if (input.pressed("camera")) setCameraMode(!firstPerson)
   if (input.pressed("restart")) startMatch()
   if (phase === "play") updatePlay(dt, elapsed)
+  else if (phase === "dunk") updateDunk(dt, elapsed)
   else if (phase === "flight") {
     updateRobot(dt)
     pose(dt)
@@ -560,6 +636,9 @@ engine.onUpdate((dt, elapsed) => {
     resultTime -= dt
     if (resultTime <= 0) nextRound()
   }
+  const dunkReady = phase === "play" && canDunk()
+  ui["dunk-hint"].hidden = !dunkReady
+  ui.shoot.textContent = dunkReady ? "扣篮" : "投篮"
   const sprinting = phase === "play" && dash > 0
   ui["dash-key"].classList.toggle("sprinting", sprinting)
   ui.dash.classList.toggle("sprinting", sprinting)
