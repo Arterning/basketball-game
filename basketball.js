@@ -7,7 +7,7 @@ import { buildCourt, court, makeBall, makePlayer } from "./court.js"
 
 const ui = Object.fromEntries(
   ["arena", "score", "round", "clock", "accuracy", "callout", "meter", "needle",
-    "shot-type", "dunk-hint", "menu", "menu-title", "summary", "difficulty", "start", "dash", "dash-key", "shoot", "spin", "post", "fake", "first-person", "third-person"]
+    "shot-type", "dunk-hint", "menu", "menu-title", "summary", "difficulty", "start", "dash", "dash-key", "shoot", "between", "spin", "post", "fake", "first-person", "third-person"]
     .map((id) => [id, document.getElementById(id)])
 )
 const engine = createEngine({
@@ -18,8 +18,9 @@ const engine = createEngine({
 const input = createInput({
   engine, actions: {
     jump: ["Space", "Pad0"],
-    sprint: ["ShiftLeft", "ShiftRight", "TouchDash"],
-    spin: ["KeyE", "TouchSpin"],
+    sprint: ["KeyL", "TouchDash"],
+    between: ["KeyJ", "TouchBetween"],
+    spin: ["KeyK", "TouchSpin"],
     post: ["KeyB", "TouchPost"],
     fake: ["KeyF", "TouchFake"],
     camera: ["KeyV"],
@@ -58,11 +59,13 @@ const playerVelocity = new THREE.Vector3()
 const robotVelocity = new THREE.Vector3()
 const moveForward = new THREE.Vector3()
 const moveSide = new THREE.Vector3()
+const betweenFeet = new THREE.Vector3()
 const dribbleHand = new THREE.Vector3()
 const crossoverDuration = 0.18
-const spinDuration = 0.62
-const spinWidth = 2.75
-const spinDrive = 0.75
+const dribbleMoves = {
+  between: { duration: 0.31, width: 0.65, drive: 0.36, recovery: 0.20 },
+  spin: { duration: 0.62, width: 2.75, drive: 0.75, recovery: 0.44 },
+}
 const stealWindup = 0.32
 const crossoverStealWindup = 0.065
 const stealReachDuration = 0.18
@@ -222,7 +225,7 @@ function finishCrossover(elapsed, interrupted = false) {
   bounceStarted = elapsed
 }
 
-function startSpin(elapsed) {
+function startDribbleMove(kind, elapsed) {
   finishCrossover(elapsed, true)
   const position = player.root.position
   moveForward.set(-position.x, 0, rim.z - position.z).normalize()
@@ -232,13 +235,14 @@ function startSpin(elapsed) {
   const hoopAngle = Math.atan2(moveForward.x, moveForward.z)
   const offset = THREE.MathUtils.euclideanModulo((hoopAngle - player.root.rotation.y) * side, Math.PI * 2)
   const sweep = offset > Math.PI / 2 && offset < Math.PI * 1.5 ? offset : Math.PI * 2
-  dribble = { side, time: 0, toHand: -ballSide, sweep, startHeight: ball.position.y }
-  dribbleCooldown = spinDuration + 0.44
+  const { duration, width, drive, recovery: cooldown } = dribbleMoves[kind]
+  dribble = { kind, side, time: 0, toHand: -ballSide, sweep, duration, width, drive, startHeight: ball.position.y }
+  dribbleCooldown = duration + cooldown
   lastLateral = 0
   lastLateralAt = -Infinity
   dash = 0
-  if (defend === "steal" && defendTime < 0.43) stealEvaded = true
-  ui.callout.textContent = "转身护球"
+  if (kind === "spin" && defend === "steal" && defendTime < 0.43) stealEvaded = true
+  ui.callout.textContent = kind === "spin" ? "转身护球" : "胯下换手"
 }
 
 function updateCrossover(elapsed) {
@@ -268,7 +272,7 @@ function updatePost(dt, elapsed) {
   const playerPos = player.root.position
   const defender = robot.root.position
   const pressed = input.pressed("post")
-  if (post && !pressed && (input.pressed("jump") || (!fakeCooldown && input.pressed("fake")) || input.pressed("spin") ||
+  if (post && !pressed && (input.pressed("jump") || (!fakeCooldown && input.pressed("fake")) || input.pressed("spin") || input.pressed("between") ||
       input.pressed("sprint") || input.move.lengthSq() > 0.04)) {
     post = null
     ui.callout.textContent = ""
@@ -326,14 +330,17 @@ function advancePlayer(dt, elapsed) {
   playerVelocity.set(0, 0, 0)
   if (!dt || charge || fake || updatePost(dt, elapsed)) return
 
-  if (!dribble && dribbleCooldown === 0 && input.pressed("spin")) startSpin(elapsed)
+  if (!dribble && dribbleCooldown === 0) {
+    if (input.pressed("between")) startDribbleMove("between", elapsed)
+    else if (input.pressed("spin")) startDribbleMove("spin", elapsed)
+  }
 
   if (dribble) {
-    const previous = THREE.MathUtils.smoothstep(dribble.time, 0, spinDuration)
-    const next = THREE.MathUtils.smoothstep(dribble.time + dt, 0, spinDuration)
+    const previous = THREE.MathUtils.smoothstep(dribble.time, 0, dribble.duration)
+    const next = THREE.MathUtils.smoothstep(dribble.time + dt, 0, dribble.duration)
     const speed = (next - previous) / dt
-    move.copy(moveSide).multiplyScalar(spinWidth * dribble.side * speed)
-    move.addScaledVector(moveForward, spinDrive * speed)
+    move.copy(moveSide).multiplyScalar(dribble.width * dribble.side * speed)
+    move.addScaledVector(moveForward, dribble.drive * speed)
   } else {
     move.set(input.move.x, 0, input.move.y)
     if (input.pressed("sprint") && dashCooldown === 0) {
@@ -622,7 +629,8 @@ function pose(dt, elapsed = 0) {
   const running = phase === "play" && playerVelocity.lengthSq() > 0.1
   const shooting = charge > 0 || airborne > 0
   const protecting = !shooting && !fake && !dunk && !dribble && isProtectingBall()
-  const progress = dribble ? clamp(dribble.time / spinDuration, 0, 1) : 0
+  const progress = dribble ? clamp(dribble.time / dribble.duration, 0, 1) : 0
+  const split = dribble?.kind === "between" ? Math.sin(Math.PI * progress) : 0
   const dribblingHand = dribble && progress > 0.45 ? dribble.toHand : ballSide
   const fakeLift = fake ? Math.sin(Math.PI * fake / fakeDuration) : 0
   const crossProgress = crossover ? clamp((elapsed - crossover.started) / crossoverDuration, 0, 1) : 0
@@ -679,6 +687,16 @@ function pose(dt, elapsed = 0) {
       player.knees[i].rotation.x = 1.10 + postEffort * 0.24
       player.arms[i].rotation.x = handOnBall ? -0.54 - 0.16 * postBounce : -0.36
       player.arms[i].rotation.z = side * 0.33
+    }
+
+    if (split > 0) {
+      const receiving = side === dribble.toHand
+      player.legs[i].rotation.x = -0.52 + split * (receiving ? -0.48 : 0.23)
+      player.legs[i].rotation.z = side * (0.23 + 0.15 * split)
+      player.knees[i].rotation.x = 1.04 + split * (receiving ? 0.14 : 0.29)
+      player.arms[i].rotation.x = receiving ? -0.64 : -0.53
+      player.arms[i].rotation.z = side * (0.30 - 0.19 * split)
+      player.elbows[i].rotation.x = receiving ? -0.47 : -0.30
     }
 
     if (crossover) {
@@ -739,8 +757,20 @@ function updateHeldBall(elapsed) {
     return
   }
   if (dribble) {
-    const progress = clamp(dribble.time / spinDuration, 0, 1)
+    const progress = clamp(dribble.time / dribble.duration, 0, 1)
     player.hands[dribble.toHand < 0 ? 0 : 1].getWorldPosition(dribbleHand)
+    if (dribble.kind === "between") {
+      player.feet[0].getWorldPosition(betweenFeet)
+      player.feet[1].getWorldPosition(solePoint)
+      betweenFeet.lerp(solePoint, 0.5).setY(0.13)
+      if (progress < 0.5) {
+        ball.position.y = dribble.startHeight
+        ball.position.lerp(betweenFeet, progress * 2)
+      } else {
+        ball.position.copy(betweenFeet).lerp(dribbleHand, progress * 2 - 1)
+      }
+      return
+    }
     ball.position.lerp(dribbleHand, THREE.MathUtils.smoothstep(progress, 0.32, 0.69))
     const yaw = player.root.rotation.y
     const wrap = 0.18 * Math.sin(Math.PI * progress)
@@ -830,12 +860,12 @@ function updatePlay(dt, elapsed) {
   }
   if (dribble) {
     dribble.time += dt
-    if (dribble.time >= spinDuration) {
+    if (dribble.time >= dribble.duration) {
       ballSide = dribble.toHand
       bounceStarted = elapsed
       dribble = null
-    } else {
-      const progress = THREE.MathUtils.smoothstep(dribble.time / spinDuration, 0, 1)
+    } else if (dribble.kind === "spin") {
+      const progress = THREE.MathUtils.smoothstep(dribble.time / dribble.duration, 0, 1)
       const hoopAngle = player.root.rotation.y
       player.root.rotation.y -= dribble.side * dribble.sweep * (1 - progress)
       if (dribble.sweep > Math.PI * 1.5 && space() < 2.5) {
@@ -893,7 +923,7 @@ if (input.touch) {
   ui.summary.textContent = "10 个进攻回合，每回合 12 秒。拖动左半屏移动。左右移动会自动换手，快速反向可以变向，按住投篮并在绿色区域松手。"
 }
 ui.start.addEventListener("click", startMatch)
-for (const [button, code] of [[ui.dash, "TouchDash"], [ui.spin, "TouchSpin"], [ui.post, "TouchPost"], [ui.fake, "TouchFake"], [ui.shoot, "Space"]]) {
+for (const [button, code] of [[ui.dash, "TouchDash"], [ui.between, "TouchBetween"], [ui.spin, "TouchSpin"], [ui.post, "TouchPost"], [ui.fake, "TouchFake"], [ui.shoot, "Space"]]) {
   button.addEventListener("pointerdown", (event) => {
     button.setPointerCapture(event.pointerId)
     input.press(code)

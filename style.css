@@ -141,4 +141,6 @@ kbd { background: #151e27; border: 1px solid #64727d; padding: 2px 5px; border-r
 
 @media (pointer: coarse) and (max-width: 420px) {
   .touch-controls span { display: none; }
+  .touch-controls { gap: 5px; }
+  .touch-controls button { padding-inline: 7px; font-size: 14px; }
 }
