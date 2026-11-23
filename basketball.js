@@ -60,6 +60,9 @@ const moveForward = new THREE.Vector3()
 const moveSide = new THREE.Vector3()
 const dribbleHand = new THREE.Vector3()
 const crossoverDuration = 0.18
+const spinDuration = 0.62
+const spinWidth = 2.75
+const spinDrive = 0.75
 const stealWindup = 0.32
 const crossoverStealWindup = 0.065
 const stealReachDuration = 0.18
@@ -225,10 +228,14 @@ function startSpin(elapsed) {
   moveForward.set(-position.x, 0, rim.z - position.z).normalize()
   if (moveForward.lengthSq() === 0) moveForward.z = -1
   moveSide.set(-moveForward.z, 0, moveForward.x)
-  const side = Math.abs(input.move.x) > 0.2 ? Math.sign(input.move.x) : -ballSide
-  const duration = 0.57
-  dribble = { side, duration, time: 0, toHand: -side }
-  dribbleCooldown = duration + 0.44
+  const side = ballSide
+  const hoopAngle = Math.atan2(moveForward.x, moveForward.z)
+  const offset = THREE.MathUtils.euclideanModulo((player.root.rotation.y - hoopAngle) * side, Math.PI * 2)
+  const sweep = offset > Math.PI / 2 && offset < Math.PI * 1.5 ? offset : Math.PI * 2
+  dribble = { side, time: 0, toHand: -ballSide, sweep, startHeight: ball.position.y }
+  dribbleCooldown = spinDuration + 0.44
+  lastLateral = 0
+  lastLateralAt = -Infinity
   dash = 0
   if (defend === "steal" && defendTime < 0.43) stealEvaded = true
   ui.callout.textContent = "转身护球"
@@ -322,10 +329,11 @@ function advancePlayer(dt, elapsed) {
   if (!dribble && dribbleCooldown === 0 && input.pressed("spin")) startSpin(elapsed)
 
   if (dribble) {
-    const progress = dribble.time / dribble.duration
-    const sideSpeed = 5 * Math.cos(progress * 1.75)
-    const forwardSpeed = 1.25 + 4.6 * Math.sin(Math.PI * progress)
-    move.copy(moveSide).multiplyScalar(sideSpeed * dribble.side).addScaledVector(moveForward, forwardSpeed)
+    const previous = THREE.MathUtils.smoothstep(dribble.time, 0, spinDuration)
+    const next = THREE.MathUtils.smoothstep(dribble.time + dt, 0, spinDuration)
+    const speed = (next - previous) / dt
+    move.copy(moveSide).multiplyScalar(spinWidth * dribble.side * speed)
+    move.addScaledVector(moveForward, spinDrive * speed)
   } else {
     move.set(input.move.x, 0, input.move.y)
     if (input.pressed("sprint") && dashCooldown === 0) {
@@ -614,7 +622,7 @@ function pose(dt, elapsed = 0) {
   const running = phase === "play" && playerVelocity.lengthSq() > 0.1
   const shooting = charge > 0 || airborne > 0
   const protecting = !shooting && !fake && !dunk && !dribble && isProtectingBall()
-  const progress = dribble ? clamp(dribble.time / dribble.duration, 0, 1) : 0
+  const progress = dribble ? clamp(dribble.time / spinDuration, 0, 1) : 0
   const dribblingHand = dribble && progress > 0.45 ? dribble.toHand : ballSide
   const fakeLift = fake ? Math.sin(Math.PI * fake / fakeDuration) : 0
   const crossProgress = crossover ? clamp((elapsed - crossover.started) / crossoverDuration, 0, 1) : 0
@@ -730,6 +738,15 @@ function updateHeldBall(elapsed) {
     ball.position.y += 0.045
     return
   }
+  if (dribble) {
+    const progress = clamp(dribble.time / spinDuration, 0, 1)
+    player.hands[dribble.toHand < 0 ? 0 : 1].getWorldPosition(dribbleHand)
+    ball.position.lerp(dribbleHand, THREE.MathUtils.smoothstep(progress, 0.32, 0.69))
+    ball.position.y = progress < 0.5
+      ? THREE.MathUtils.lerp(dribble.startHeight, 0.13, progress * 2)
+      : THREE.MathUtils.lerp(0.13, dribbleHand.y, progress * 2 - 1)
+    return
+  }
   if (crossover) {
     const progress = clamp((elapsed - crossover.started) / crossoverDuration, 0, 1)
     player.hands[crossover.toHand < 0 ? 0 : 1].getWorldPosition(dribbleHand)
@@ -809,13 +826,13 @@ function updatePlay(dt, elapsed) {
   }
   if (dribble) {
     dribble.time += dt
-    if (dribble.time >= dribble.duration) {
+    if (dribble.time >= spinDuration) {
       ballSide = dribble.toHand
       bounceStarted = elapsed
       dribble = null
     } else {
-      const progress = THREE.MathUtils.smoothstep(dribble.time / dribble.duration, 0, 1)
-      player.root.rotation.y -= dribble.side * progress * Math.PI * 2
+      const progress = THREE.MathUtils.smoothstep(dribble.time / spinDuration, 0, 1)
+      player.root.rotation.y += dribble.side * dribble.sweep * (1 - progress)
     }
   }
   if (!fake && !charge && !post && !dribble && !fakeCooldown && input.pressed("fake") && remaining > 0) {
