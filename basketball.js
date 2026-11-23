@@ -138,6 +138,10 @@ const clamp = THREE.MathUtils.clamp
 const space = () => Math.hypot(player.root.position.x - robot.root.position.x, player.root.position.z - robot.root.position.z)
 const basketDistance = () => Math.hypot(player.root.position.x, player.root.position.z - court.rimZ)
 const timestamp = () => remaining.toFixed(1)
+function angleDelta(from, to) {
+  return THREE.MathUtils.euclideanModulo(to - from + Math.PI, Math.PI * 2) - Math.PI
+}
+
 function face(actor, x, z) {
   const position = actor.root.position
   actor.root.rotation.y = Math.atan2(x - position.x, z - position.z)
@@ -239,6 +243,7 @@ function startDribbleMove(kind, elapsed) {
   const { duration, width, drive, reactionAt, reactionDelay } = dribbleMoves[kind]
   dribble = {
     kind, side, time: 0, toHand: -ballSide, sweep, duration, width, drive,
+    entryYaw: angleDelta(hoopAngle - side * sweep, player.root.rotation.y),
     startHeight: ball.position.y, reactionAt, reactionDelay: space() < 2.25 ? reactionDelay : 0,
   }
   lastLateral = 0
@@ -868,11 +873,17 @@ function updatePlay(dt, elapsed) {
   const action = takeChainedAction()
   advancePlayer(dt, elapsed, action)
   const position = player.root.position
+  const previousYaw = player.root.rotation.y
   if (post) {
     face(player, robot.root.position.x, robot.root.position.z)
     player.root.rotation.y += Math.PI
   } else {
     face(player, 0, rim.z)
+    if (!dribble && !fake && !charge && action !== "jump") {
+      const lateral = Math.abs(playerVelocity.x) > 0.35
+      const target = lateral ? Math.atan2(playerVelocity.x, playerVelocity.z) : player.root.rotation.y
+      player.root.rotation.y = previousYaw + angleDelta(previousYaw, target) * (1 - Math.exp(-21 * dt))
+    }
   }
   if (dribble) {
     dribble.time += dt
@@ -888,11 +899,12 @@ function updatePlay(dt, elapsed) {
       const progress = THREE.MathUtils.smoothstep(dribble.time / dribble.duration, 0, 1)
       const hoopAngle = player.root.rotation.y
       player.root.rotation.y -= dribble.side * dribble.sweep * (1 - progress)
+      player.root.rotation.y += dribble.entryYaw * (1 - THREE.MathUtils.smoothstep(progress, 0, 0.35))
       if (dribble.sweep > Math.PI * 1.5 && space() < 2.5) {
         const defender = robot.root.position
         const away = Math.atan2(position.x - defender.x, position.z - defender.z)
         const hoopBack = hoopAngle + Math.PI
-        const correction = THREE.MathUtils.euclideanModulo(away - hoopBack + Math.PI, Math.PI * 2) - Math.PI
+        const correction = angleDelta(hoopBack, away)
         player.root.rotation.y += clamp(correction, -0.74, 0.74) * Math.sin(progress * Math.PI) ** 4
       }
     }
