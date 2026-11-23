@@ -230,7 +230,7 @@ function startSpin(elapsed) {
   moveSide.set(-moveForward.z, 0, moveForward.x)
   const side = ballSide
   const hoopAngle = Math.atan2(moveForward.x, moveForward.z)
-  const offset = THREE.MathUtils.euclideanModulo((player.root.rotation.y - hoopAngle) * side, Math.PI * 2)
+  const offset = THREE.MathUtils.euclideanModulo((hoopAngle - player.root.rotation.y) * side, Math.PI * 2)
   const sweep = offset > Math.PI / 2 && offset < Math.PI * 1.5 ? offset : Math.PI * 2
   dribble = { side, time: 0, toHand: -ballSide, sweep, startHeight: ball.position.y }
   dribbleCooldown = spinDuration + 0.44
@@ -742,6 +742,10 @@ function updateHeldBall(elapsed) {
     const progress = clamp(dribble.time / spinDuration, 0, 1)
     player.hands[dribble.toHand < 0 ? 0 : 1].getWorldPosition(dribbleHand)
     ball.position.lerp(dribbleHand, THREE.MathUtils.smoothstep(progress, 0.32, 0.69))
+    const yaw = player.root.rotation.y
+    const wrap = 0.18 * Math.sin(Math.PI * progress)
+    ball.position.x += Math.sin(yaw) * wrap
+    ball.position.z += Math.cos(yaw) * wrap
     ball.position.y = progress < 0.5
       ? THREE.MathUtils.lerp(dribble.startHeight, 0.13, progress * 2)
       : THREE.MathUtils.lerp(0.13, dribbleHand.y, progress * 2 - 1)
@@ -832,7 +836,15 @@ function updatePlay(dt, elapsed) {
       dribble = null
     } else {
       const progress = THREE.MathUtils.smoothstep(dribble.time / spinDuration, 0, 1)
-      player.root.rotation.y += dribble.side * dribble.sweep * (1 - progress)
+      const hoopAngle = player.root.rotation.y
+      player.root.rotation.y -= dribble.side * dribble.sweep * (1 - progress)
+      if (dribble.sweep > Math.PI * 1.5 && space() < 2.5) {
+        const defender = robot.root.position
+        const away = Math.atan2(position.x - defender.x, position.z - defender.z)
+        const hoopBack = hoopAngle + Math.PI
+        const correction = THREE.MathUtils.euclideanModulo(away - hoopBack + Math.PI, Math.PI * 2) - Math.PI
+        player.root.rotation.y += clamp(correction, -0.74, 0.74) * Math.sin(progress * Math.PI) ** 4
+      }
     }
   }
   if (!fake && !charge && !post && !dribble && !fakeCooldown && input.pressed("fake") && remaining > 0) {
