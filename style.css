@@ -80,3 +80,40 @@ kbd { background: #151e27; border: 1px solid #64727d; padding: 2px 5px; border-r
   background: #8ee5ff;
   color: #142630;
 }
+
+#camera-options {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  bottom: max(48px, calc(env(safe-area-inset-bottom) + 42px));
+  transform: translateX(-50%);
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid #52616b;
+  border-radius: 10px;
+  background: #101820f2;
+  white-space: nowrap;
+}
+#camera-options button { padding: 6px 10px; font-size: 12px; background: transparent; color: #fff7e9; }
+#camera-options button[aria-pressed="true"] { background: #ffbc73; color: #17130e; }
+@media (pointer: coarse) {
+  #camera-options { bottom: max(72px, calc(env(safe-area-inset-bottom) + 64px)); }
+}
+
+.difficulty-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.difficulty-setting select {
+  width: 60%;
+  padding: 7px 10px;
+  border: 1px solid #64727d;
+  border-radius: 8px;
+  background: #243743;
+  color: inherit;
+  font: inherit;
+}

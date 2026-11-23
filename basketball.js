@@ -5,7 +5,7 @@ import { buildCourt, court, makeBall, makePlayer } from "./court.js"
 
 const ui = Object.fromEntries(
   ["arena", "score", "round", "clock", "accuracy", "callout", "meter", "needle",
-    "shot-type", "menu", "menu-title", "summary", "start", "dash", "dash-key", "shoot", "cross", "spin"]
+    "shot-type", "menu", "menu-title", "summary", "difficulty", "start", "dash", "dash-key", "shoot", "cross", "spin", "first-person", "third-person"]
     .map((id) => [id, document.getElementById(id)])
 )
 const engine = createEngine({
@@ -19,12 +19,19 @@ const input = createInput({
     sprint: ["ShiftLeft", "ShiftRight", "TouchDash"],
     cross: ["KeyQ", "TouchCross"],
     spin: ["KeyE", "TouchSpin"],
+    camera: ["KeyV"],
   },
 })
 buildCourt(engine.scene)
 const player = makePlayer(engine.scene, false)
 const robot = makePlayer(engine.scene, true)
 const ball = makeBall(engine.scene)
+
+const difficulties = {
+  easy: { speed: 0.86, shotWindow: 1.25 },
+  normal: { speed: 1.18, shotWindow: 1 },
+  hard: { speed: 1.42, shotWindow: 0.72 },
+}
 
 const rounds = 10
 const clockDuration = 12
@@ -44,13 +51,17 @@ const waypoint = new THREE.Vector3()
 const toRim = new THREE.Vector3()
 const previousBall = new THREE.Vector3()
 const robotHand = new THREE.Vector3()
+const viewDirection = new THREE.Vector3(0, 0, -1)
 const cameraGoal = new THREE.Vector3()
 const look = new THREE.Vector3()
 const delta = new THREE.Vector3()
 const segment = new THREE.Line3()
 const closest = new THREE.Vector3()
 
+let firstPerson = false
+let cameraChanged = true
 let phase = "menu"
+let difficulty = difficulties.normal
 let score = 0
 let round = 1
 let makes = 0
@@ -119,6 +130,7 @@ function prepareRound() {
 }
 
 function startMatch() {
+  difficulty = difficulties[ui.difficulty.value]
   score = makes = attempts = 0
   round = 1
   prepareRound()
@@ -222,7 +234,7 @@ function pressure() {
 
 function timingWindow() {
   const range = clamp(basketDistance() / 11, 0, 1)
-  return THREE.MathUtils.lerp(0.155, 0.032, range) * (1 - pressure() * 0.34)
+  return THREE.MathUtils.lerp(0.155, 0.032, range) * (1 - pressure() * 0.34) * difficulty.shotWindow
 }
 
 function shoot() {
@@ -286,9 +298,9 @@ function updateRobot(dt) {
     waypoint.copy(playerPos).addScaledVector(playerVelocity, 0.20)
     waypoint.addScaledVector(toRim, (chasing ? 2.3 : 1.08) - driveSpeed * 0.20)
     delta.set(waypoint.x - position.x, 0, waypoint.z - position.z)
-    const limit = charge ? 2.25 : chasing ? 6.15 : 4.85
+    const limit = (charge ? 2.25 : chasing ? 6.15 : 4.85) * difficulty.speed
     delta.clampLength(0, limit * 0.14).multiplyScalar(1 / 0.14)
-    robotVelocity.lerp(delta, 1 - Math.exp(-(chasing ? 11 : 8) * dt))
+    robotVelocity.lerp(delta, 1 - Math.exp(-(chasing ? 11 : 8) * difficulty.speed * dt))
     position.addScaledVector(robotVelocity, dt)
     if (defendCooldown <= 0) {
       if (charge > 0.21 && space() < 1.72) beginDefense("block")
@@ -301,7 +313,7 @@ function updateRobot(dt) {
   if (defend === "steal") {
     if (defendTime >= 0.32 && defendTime < 0.48) {
       delta.set(ball.position.x - position.x, 0, ball.position.z - position.z)
-      position.addScaledVector(delta.normalize(), 2.2 * dt)
+      position.addScaledVector(delta.normalize(), 2.2 * difficulty.speed * dt)
     }
     if (defendTime >= 0.48) {
       const reach = Math.hypot(ball.position.x - position.x, ball.position.z - position.z)
@@ -493,8 +505,50 @@ for (const [button, code] of [[ui.dash, "TouchDash"], [ui.cross, "TouchCross"], 
   }
 }
 
+function setCameraMode(useFirstPerson) {
+  if (firstPerson === useFirstPerson) return
+  firstPerson = useFirstPerson
+  cameraChanged = true
+  player.head.visible = !firstPerson
+  player.marker.visible = !firstPerson
+  engine.camera.fov = firstPerson ? 72 : 48
+  engine.camera.near = firstPerson ? 0.06 : 0.1
+  engine.camera.updateProjectionMatrix()
+  ui["first-person"].setAttribute("aria-pressed", String(firstPerson))
+  ui["third-person"].setAttribute("aria-pressed", String(!firstPerson))
+}
+
+function updateCamera(dt) {
+  const position = player.root.position
+  const portrait = engine.camera.aspect < 0.85
+  if (firstPerson) {
+    cameraGoal.set(-position.x, 0, rim.z - position.z)
+    const distance = cameraGoal.length()
+    // Keep the aim stable through spin moves and when standing under the hoop.
+    if (distance > 0.45) viewDirection.copy(cameraGoal).divideScalar(distance)
+    cameraGoal.copy(position).addScaledVector(viewDirection, 0.18)
+    const eyeHeight = position.y + 1.63
+    cameraGoal.y = cameraChanged ? eyeHeight
+      : THREE.MathUtils.lerp(engine.camera.position.y, eyeHeight, 1 - Math.exp(-16 * dt))
+    engine.camera.position.copy(cameraGoal)
+    look.copy(cameraGoal).addScaledVector(viewDirection, 3)
+    const rimSlope = (rim.y - cameraGoal.y) / Math.max(0.55, distance - 0.18)
+    look.y += 3 * clamp(rimSlope * 0.72 - 0.24, -0.18, 1.9)
+  } else {
+    cameraGoal.set(1.95 + position.x * 0.41, portrait ? 8.5 : 6.9, position.z * 0.58 + (portrait ? 12.5 : 10.3))
+    engine.camera.position.lerp(cameraGoal, cameraChanged ? 1 : 1 - Math.exp(-5 * dt))
+    look.set(position.x * 0.42, 0.85, (position.z + rim.z) * 0.5)
+  }
+  engine.camera.lookAt(look)
+  cameraChanged = false
+}
+
+ui["first-person"].addEventListener("click", () => setCameraMode(true))
+ui["third-person"].addEventListener("click", () => setCameraMode(false))
+
 prepareRound()
 engine.onUpdate((dt, elapsed) => {
+  if (input.pressed("camera")) setCameraMode(!firstPerson)
   if (input.pressed("restart")) startMatch()
   if (phase === "play") updatePlay(dt, elapsed)
   else if (phase === "flight") {
@@ -510,11 +564,6 @@ engine.onUpdate((dt, elapsed) => {
   ui["dash-key"].classList.toggle("sprinting", sprinting)
   ui.dash.classList.toggle("sprinting", sprinting)
   ball.rotation.x += dt * (phase === "flight" ? 8 : 2)
-  const position = player.root.position
-  const portrait = engine.camera.aspect < 0.85
-  cameraGoal.set(1.95 + position.x * 0.41, portrait ? 8.5 : 6.9, position.z * 0.58 + (portrait ? 12.5 : 10.3))
-  engine.camera.position.lerp(cameraGoal, 1 - Math.exp(-5 * dt))
-  look.set(position.x * 0.42, 0.85, (position.z + rim.z) * 0.5)
-  engine.camera.lookAt(look)
+  updateCamera(dt)
 })
 engine.start()

@@ -146,18 +146,19 @@ export function makePlayer(scene, robot) {
   profile(torso, trim, 0, 0.88, 0, [[0.202, 0], [0.205, 0.035]], 0.63)
   jerseyNumber(torso, robot ? "02" : "11")
   oval(torso, skin, 0, 1.445, 0, 0.077, 0.11, 0.07)
-  oval(torso, skin, 0, 1.625, 0, 0.122, 0.165, 0.126)
-  oval(torso, skin, 0, 1.546, 0.048, 0.095, 0.076, 0.087)
+  const head = joint(torso, 0, 0)
+  oval(head, skin, 0, 1.625, 0, 0.122, 0.165, 0.126)
+  oval(head, skin, 0, 1.546, 0.048, 0.095, 0.076, 0.087)
   if (robot) {
-    oval(torso, hair, 0, 1.656, 0.075, 0.124, 0.052, 0.074)
-    for (const side of [-1, 1]) oval(torso, tag, side * 0.047, 1.658, 0.137, 0.027, 0.013, 0.009)
+    oval(head, hair, 0, 1.656, 0.075, 0.124, 0.052, 0.074)
+    for (const side of [-1, 1]) oval(head, tag, side * 0.047, 1.658, 0.137, 0.027, 0.013, 0.009)
   } else {
-    const cap = mesh(torso, new THREE.SphereGeometry(1, 24, 14, 0, Math.PI * 2, 0, 1.57), hair, 0, 1.665, -0.013)
+    const cap = mesh(head, new THREE.SphereGeometry(1, 24, 14, 0, Math.PI * 2, 0, 1.57), hair, 0, 1.665, -0.013)
     cap.scale.set(0.126, 0.127, 0.132)
-    oval(torso, skin, 0, 1.602, 0.122, 0.029, 0.039, 0.029)
+    oval(head, skin, 0, 1.602, 0.122, 0.029, 0.039, 0.029)
     for (const side of [-1, 1]) {
-      oval(torso, skin, side * 0.113, 1.612, 0, 0.022, 0.043, 0.029)
-      oval(torso, hair, side * 0.051, 1.643, 0.115, 0.025, 0.009, 0.012)
+      oval(head, skin, side * 0.113, 1.612, 0, 0.022, 0.043, 0.029)
+      oval(head, hair, side * 0.051, 1.643, 0.115, 0.025, 0.009, 0.012)
     }
   }
 
@@ -196,7 +197,7 @@ export function makePlayer(scene, robot) {
   const marker = new THREE.Group()
   ring(marker, tag, 0, 0.033, 0, 0.48, 0.046)
   scene.add(root, marker)
-  return { root, rig, torso, marker, arms, elbows, legs, knees, feet, hands }
+  return { root, rig, torso, head, marker, arms, elbows, legs, knees, feet, hands }
 }
 
 export function makeBall(scene) {
