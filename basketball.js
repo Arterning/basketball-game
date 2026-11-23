@@ -5,7 +5,7 @@ import { buildCourt, court, makeBall, makePlayer } from "./court.js"
 
 const ui = Object.fromEntries(
   ["arena", "score", "round", "clock", "accuracy", "callout", "meter", "needle",
-    "shot-type", "dunk-hint", "menu", "menu-title", "summary", "difficulty", "start", "dash", "dash-key", "shoot", "spin", "first-person", "third-person"]
+    "shot-type", "dunk-hint", "menu", "menu-title", "summary", "difficulty", "start", "dash", "dash-key", "shoot", "spin", "post", "first-person", "third-person"]
     .map((id) => [id, document.getElementById(id)])
 )
 const engine = createEngine({
@@ -18,6 +18,7 @@ const input = createInput({
     jump: ["Space", "Pad0"],
     sprint: ["ShiftLeft", "ShiftRight", "TouchDash"],
     spin: ["KeyE", "TouchSpin"],
+    post: ["KeyB", "TouchPost"],
     camera: ["KeyV"],
   },
 })
@@ -50,6 +51,7 @@ const moveForward = new THREE.Vector3()
 const moveSide = new THREE.Vector3()
 const dribbleHand = new THREE.Vector3()
 const crossoverDuration = 0.18
+const postStepDuration = 0.22
 const waypoint = new THREE.Vector3()
 const toRim = new THREE.Vector3()
 const netPreviousBall = new THREE.Vector3()
@@ -92,6 +94,7 @@ let dribbleCooldown = 0
 // is the player's left when moving toward the far end of the court.
 let ballSide = 1
 let crossover = null
+let post = null
 let lastLateral = 0
 let lastLateralAt = -Infinity
 let bounceStarted = 0
@@ -122,7 +125,7 @@ function prepareRound() {
   dribble = null
   dribbleCooldown = 0
   ballSide = 1
-  crossover = null
+  crossover = post = null
   lastLateral = 0
   lastLateralAt = -Infinity
   bounceStarted = 0
@@ -158,7 +161,7 @@ function startMatch() {
 function finishRound(message) {
   phase = "result"
   resultTime = 1.3
-  dribble = crossover = null
+  dribble = crossover = post = null
   charge = 0
   ui.meter.hidden = true
   ui.callout.textContent = message
@@ -225,12 +228,67 @@ function updateCrossover(elapsed) {
   }
 }
 
+function updatePost(dt, elapsed) {
+  const playerPos = player.root.position
+  const defender = robot.root.position
+  const pressed = input.pressed("post")
+  if (post && !pressed && (input.pressed("jump") || input.pressed("spin") ||
+      input.pressed("sprint") || input.move.lengthSq() > 0.04)) {
+    post = null
+    ui.callout.textContent = ""
+    return false
+  }
+
+  if (!post) {
+    if (!pressed || dribble || remaining <= 0) return false
+    toRim.set(-playerPos.x, 0, rim.z - playerPos.z).normalize()
+    delta.set(defender.x - playerPos.x, 0, defender.z - playerPos.z)
+    if (delta.length() > 1.55 || delta.dot(toRim) < 0.30) {
+      ui.callout.textContent = "贴近正面的防守人再背打"
+      return false
+    }
+    finishCrossover(elapsed, true)
+    dash = 0
+    recover(0.18)
+    post = { time: 0, distance: 0, queued: false }
+    ui.callout.textContent = input.touch ? "背身护球 · 连点背打往里顶" : "背身护球 · 连按 B 往里顶"
+    return true
+  }
+
+  if (pressed) post.queued = true
+  if (post.queued && post.time === 0) {
+    post.queued = false
+    post.distance = Math.min(0.52 / difficulty.speed, Math.max(0, basketDistance() - 0.94))
+    if (post.distance > 0.01) {
+      post.time = postStepDuration
+      ui.callout.textContent = "背身顶进"
+    } else {
+      ui.callout.textContent = "已到篮下"
+    }
+  }
+
+  if (post.time > 0) {
+    const previous = 1 - post.time / postStepDuration
+    post.time = Math.max(0, post.time - dt)
+    const progress = 1 - post.time / postStepDuration
+    const step = post.distance * (THREE.MathUtils.smoothstep(progress, 0, 1) - THREE.MathUtils.smoothstep(previous, 0, 1))
+    toRim.set(-playerPos.x, 0, rim.z - playerPos.z).normalize()
+    playerPos.addScaledVector(toRim, step)
+    defender.addScaledVector(toRim, step)
+    playerVelocity.copy(toRim).multiplyScalar(step / dt)
+    hasMoved = true
+    stride += step * 5
+    robotStride += step * 7
+  }
+  return true
+}
+
 function advancePlayer(dt, elapsed) {
   dashCooldown = Math.max(0, dashCooldown - dt)
   dash = Math.max(0, dash - dt)
   dribbleCooldown = Math.max(0, dribbleCooldown - dt)
   playerVelocity.set(0, 0, 0)
-  if (!dt || charge) return
+  if (!dt || charge || updatePost(dt, elapsed)) return
 
   if (!dribble && dribbleCooldown === 0 && input.pressed("spin")) startSpin(elapsed)
 
@@ -378,6 +436,12 @@ function recover(seconds) {
 function updateRobot(dt) {
   const position = robot.root.position
   const playerPos = player.root.position
+  if (post) {
+    robotVelocity.set(0, 0, 0)
+    chasing = false
+    face(robot, playerPos.x, playerPos.z)
+    return
+  }
   const oldX = position.x
   const oldZ = position.z
   defendTime += dt
@@ -440,7 +504,7 @@ function pose(dt, elapsed = 0) {
   const progress = dribble ? clamp(dribble.time / dribble.duration, 0, 1) : 0
   const dribblingHand = dribble && progress > 0.45 ? dribble.toHand : ballSide
   const crossProgress = crossover ? clamp((elapsed - crossover.started) / crossoverDuration, 0, 1) : 0
-  const crouch = charge ? Math.max(0, 1 - charge / 0.19) : dribble || crossover ? 0.78 : running ? 0.35 : 0.10
+  const crouch = charge ? Math.max(0, 1 - charge / 0.19) : post || dribble || crossover ? 0.78 : running ? 0.35 : 0.10
   airborne = Math.max(0, airborne - dt)
   player.root.position.y = charge
     ? 0.48 * Math.sin(Math.PI * clamp((charge - 0.12) / 0.99, 0, 1))
@@ -448,13 +512,14 @@ function pose(dt, elapsed = 0) {
   const dunkLift = dunk ? Math.sin(Math.PI * dunk.time / dunkDuration) : 0
   if (dunk) player.root.position.y = 1.28 * dunkLift
   player.rig.position.y = -0.10 * crouch
-  player.torso.rotation.x = 0.20 * crouch
+  const postEffort = post ? Math.sin(Math.PI * post.time / postStepDuration) : 0
+  player.torso.rotation.x = post ? -0.12 - 0.20 * postEffort : 0.20 * crouch
   player.torso.rotation.z = crossover ? crossover.toHand * Math.sin(crossProgress * Math.PI) * 0.19 : 0
   const jumping = defend === "block" && defendTime > 0.12
   robot.root.position.y = jumping ? Math.max(0, 0.94 * Math.sin(Math.PI * (defendTime - 0.12) / 0.57)) : 0
   robot.rig.position.y = jumping ? 0 : -0.095
   robot.torso.rotation.x = jumping ? 0 : defend === "steal" ? 0.32 : 0.15
-  const shuffling = robotVelocity.lengthSq() > 0.12
+  const shuffling = postEffort > 0 || robotVelocity.lengthSq() > 0.12
   for (let i = 0; i < 2; i++) {
     const side = i === 0 ? -1 : 1
     const step = side * Math.sin(stride)
@@ -465,6 +530,13 @@ function pose(dt, elapsed = 0) {
     player.arms[i].rotation.x = shooting ? -2.24 : handOnBall ? -0.57 - 0.20 * Math.cos(elapsed * 13) : -0.35 - step * 0.22
     player.arms[i].rotation.z = shooting ? side * 0.06 : side * (handOnBall ? 0.23 : 0.35)
     player.elbows[i].rotation.x = shooting ? -0.40 - 0.20 * (airborne > 0) : handOnBall ? -0.38 : -0.51
+
+    if (post) {
+      player.legs[i].rotation.x = 0.17 + step * postEffort * 0.52
+      player.knees[i].rotation.x = 0.40 + postEffort * 0.35
+      player.arms[i].rotation.x = handOnBall ? -0.70 : -0.36
+      player.arms[i].rotation.z = side * 0.33
+    }
 
     if (crossover) {
       const sending = side === ballSide
@@ -490,6 +562,7 @@ function pose(dt, elapsed = 0) {
     robot.feet[i].rotation.x = -(robot.legs[i].rotation.x + robot.knees[i].rotation.x) * 0.68
     robot.arms[i].rotation.x = defend === "block" ? (jumping ? -2.42 : -1.1)
       : defend === "steal" ? (defendTime >= 0.32 ? -1.37 : -0.58) : -0.35
+    if (post) robot.arms[i].rotation.x = -0.72 - 0.30 * postEffort
     robot.arms[i].rotation.z = side * (defend === "block" ? 0.17 : 0.45)
     robot.elbows[i].rotation.x = defend === "block" ? -0.19 : defend === "steal" && defendTime >= 0.32 ? -0.15 : -0.52
   }
@@ -566,7 +639,12 @@ function updatePlay(dt, elapsed) {
   ui.clock.classList.toggle("urgent", remaining < 4)
   advancePlayer(dt, elapsed)
   const position = player.root.position
-  face(player, 0, rim.z)
+  if (post) {
+    face(player, robot.root.position.x, robot.root.position.z)
+    player.root.rotation.y += Math.PI
+  } else {
+    face(player, 0, rim.z)
+  }
   if (dribble) {
     dribble.time += dt
     if (dribble.time >= dribble.duration) {
@@ -578,7 +656,7 @@ function updatePlay(dt, elapsed) {
       player.root.rotation.y -= dribble.side * progress * Math.PI * 2
     }
   }
-  if (!charge && !dribble && input.pressed("jump") && remaining > 0) {
+  if (!charge && !post && !dribble && input.pressed("jump") && remaining > 0) {
     finishCrossover(elapsed, true)
     if (canDunk()) {
       startDunk()
@@ -616,7 +694,7 @@ if (input.touch) {
   ui.summary.textContent = "10 个进攻回合，每回合 12 秒。拖动左半屏移动。左右移动会自动换手，快速反向可以变向，按住投篮并在绿色区域松手。"
 }
 ui.start.addEventListener("click", startMatch)
-for (const [button, code] of [[ui.dash, "TouchDash"], [ui.spin, "TouchSpin"], [ui.shoot, "Space"]]) {
+for (const [button, code] of [[ui.dash, "TouchDash"], [ui.spin, "TouchSpin"], [ui.post, "TouchPost"], [ui.shoot, "Space"]]) {
   button.addEventListener("pointerdown", (event) => {
     button.setPointerCapture(event.pointerId)
     input.press(code)
@@ -688,6 +766,7 @@ engine.onUpdate((dt, elapsed) => {
   const dunkReady = phase === "play" && canDunk()
   ui["dunk-hint"].hidden = !dunkReady
   ui.shoot.textContent = dunkReady ? "扣篮" : "投篮"
+  ui.post.setAttribute("aria-pressed", String(Boolean(post)))
   const sprinting = phase === "play" && dash > 0
   ui["dash-key"].classList.toggle("sprinting", sprinting)
   ui.dash.classList.toggle("sprinting", sprinting)

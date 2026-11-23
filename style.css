@@ -133,3 +133,8 @@ kbd { background: #151e27; border: 1px solid #64727d; padding: 2px 5px; border-r
 @media (pointer: coarse) {
   .dunk-key { display: none; }
 }
+
+#post[aria-pressed="true"] {
+  background: #8ee5ff;
+  color: #142630;
+}
