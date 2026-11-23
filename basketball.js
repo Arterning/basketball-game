@@ -5,7 +5,7 @@ import { buildCourt, court, makeBall, makePlayer } from "./court.js"
 
 const ui = Object.fromEntries(
   ["arena", "score", "round", "clock", "accuracy", "callout", "meter", "needle",
-    "shot-type", "menu", "menu-title", "summary", "start", "dash", "shoot", "cross", "spin"]
+    "shot-type", "menu", "menu-title", "summary", "start", "dash", "dash-key", "shoot", "cross", "spin"]
     .map((id) => [id, document.getElementById(id)])
 )
 const engine = createEngine({
@@ -34,6 +34,7 @@ const gravity = 10.5
 const layupRange = 1.9
 const rim = new THREE.Vector3(0, court.rimY, court.rimZ)
 const move = new THREE.Vector3()
+const dashDirection = new THREE.Vector3()
 const playerVelocity = new THREE.Vector3()
 const robotVelocity = new THREE.Vector3()
 const moveForward = new THREE.Vector3()
@@ -193,12 +194,20 @@ function advancePlayer(dt) {
     move.copy(moveSide).multiplyScalar(sideSpeed * dribble.side).addScaledVector(moveForward, forwardSpeed)
   } else {
     move.set(input.move.x, 0, input.move.y)
-    if (move.lengthSq() < 0.001) return
-    if (input.down("sprint") && dashCooldown === 0) {
+    if (input.pressed("sprint") && dashCooldown === 0) {
+      dashDirection.copy(move)
+      if (dashDirection.lengthSq() < 0.001) {
+        const position = player.root.position
+        dashDirection.set(-position.x, 0, rim.z - position.z)
+        if (dashDirection.lengthSq() < 0.001) dashDirection.z = -1
+      }
+      dashDirection.normalize()
       dash = 0.29
       dashCooldown = 0.85
     }
-    move.multiplyScalar(dash > 0 ? 7.1 : 4.35)
+    if (dash > 0) move.copy(dashDirection).multiplyScalar(8.2)
+    else move.multiplyScalar(4.35)
+    if (move.lengthSq() < 0.001) return
   }
 
   playerVelocity.copy(move)
@@ -213,7 +222,7 @@ function pressure() {
 
 function timingWindow() {
   const range = clamp(basketDistance() / 11, 0, 1)
-  return THREE.MathUtils.lerp(0.235, 0.045, range) * (1 - pressure() * 0.34)
+  return THREE.MathUtils.lerp(0.155, 0.032, range) * (1 - pressure() * 0.34)
 }
 
 function shoot() {
@@ -359,6 +368,7 @@ function pose(dt, elapsed = 0) {
     robot.arms[i].rotation.z = side * (defend === "block" ? 0.17 : 0.45)
     robot.elbows[i].rotation.x = defend === "block" ? -0.19 : defend === "steal" && defendTime >= 0.32 ? -0.15 : -0.52
   }
+  player.marker.scale.setScalar(dash > 0 && phase === "play" ? 1.22 : 1)
   player.marker.position.set(player.root.position.x, 0, player.root.position.z)
   robot.marker.position.set(robot.root.position.x, 0, robot.root.position.z)
 }
@@ -440,7 +450,10 @@ function updatePlay(dt, elapsed) {
       player.root.rotation.y -= dribble.side * progress * Math.PI * 2
     }
   }
-  if (!charge && !dribble && input.pressed("jump")) charge = Number.EPSILON
+  if (!charge && !dribble && input.pressed("jump")) {
+    charge = Number.EPSILON
+    dash = 0
+  }
   if (charge) charge += dt
   updateHeldBall(elapsed)
   updateRobot(dt)
@@ -493,6 +506,9 @@ engine.onUpdate((dt, elapsed) => {
     resultTime -= dt
     if (resultTime <= 0) nextRound()
   }
+  const sprinting = phase === "play" && dash > 0
+  ui["dash-key"].classList.toggle("sprinting", sprinting)
+  ui.dash.classList.toggle("sprinting", sprinting)
   ball.rotation.x += dt * (phase === "flight" ? 8 : 2)
   const position = player.root.position
   const portrait = engine.camera.aspect < 0.85

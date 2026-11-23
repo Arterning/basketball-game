@@ -74,3 +74,9 @@ kbd { background: #151e27; border: 1px solid #64727d; padding: 2px 5px; border-r
   .touch-controls { flex-wrap: wrap; justify-content: flex-end; }
   .touch-controls button { padding-inline: clamp(9px, 3vw, 18px); }
 }
+
+#dash-key.sprinting,
+#dash.sprinting {
+  background: #8ee5ff;
+  color: #142630;
+}
