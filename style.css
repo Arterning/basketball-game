@@ -130,7 +130,9 @@ kbd { background: #151e27; border: 1px solid #64727d; padding: 2px 5px; border-r
   font-weight: 800;
   pointer-events: none;
 }
+.dunk-touch { display: none; }
 @media (pointer: coarse) {
+  .dunk-touch { display: inline; }
   .dunk-key { display: none; }
 }
 

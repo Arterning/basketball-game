@@ -48,7 +48,7 @@
       <div><span>命中率</span><strong id="accuracy">—</strong></div>
     </header>
     <div id="callout" role="status"></div>
-    <div id="dunk-hint" hidden><span class="dunk-key"><kbd>空格</kbd> </span>可扣篮</div>
+    <div id="dunk-hint" hidden><span class="dunk-key">按住 <kbd>空格</kbd> 扣篮</span><span class="dunk-touch">按住扣篮键</span></div>
     <div id="meter" hidden aria-label="投篮时机">
       <span id="shot-type"></span>
       <div class="track"><i class="green"></i><i id="needle"></i></div>
@@ -68,7 +68,7 @@
         <button id="start" type="button">开始挑战</button>
       </div>
     </section>
-    <footer><span><kbd>WASD</kbd> 移动</span><span>左右移动自动换手</span><span><kbd>J</kbd> 胯下</span><span><kbd>K</kbd> 转身</span><span><kbd id="dash-key">L</kbd> 加速</span><span><kbd>B</kbd> 背打</span><span><kbd>F</kbd> 投篮假动作</span><span><kbd>空格</kbd> 按住起跳 · 松开投篮</span><span><kbd>V</kbd> 切换视角</span><span><kbd>R</kbd> 重开</span></footer>
+    <footer><span><kbd>WASD</kbd> 移动</span><span>左右移动自动换手</span><span><kbd>J</kbd> 胯下</span><span><kbd>K</kbd> 转身</span><span><kbd id="dash-key">L</kbd> 加速</span><span><kbd>B</kbd> 背打</span><span><kbd>空格</kbd> 短按假投 · 长按蓄力投篮</span><span><kbd>V</kbd> 切换视角</span><span><kbd>R</kbd> 重开</span></footer>
     <div id="camera-options" role="group" aria-label="镜头视角，快捷键 V">
       <button id="third-person" type="button" aria-pressed="true">第三人称</button>
       <button id="first-person" type="button" aria-pressed="false">第一人称</button>
@@ -79,7 +79,6 @@
       <button id="spin" type="button">转身</button>
       <button id="dash" type="button">加速</button>
       <button id="post" type="button" aria-pressed="false">背打</button>
-      <button id="fake" type="button">假投</button>
       <button id="shoot" type="button">投篮</button>
     </div>
     <script type="module" src="./basketball.js"></script>

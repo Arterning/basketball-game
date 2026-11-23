@@ -7,7 +7,7 @@ import { buildCourt, court, makeBall, makePlayer } from "./court.js"
 
 const ui = Object.fromEntries(
   ["arena", "score", "round", "clock", "accuracy", "callout", "meter", "needle",
-    "shot-type", "dunk-hint", "menu", "menu-title", "summary", "difficulty", "start", "dash", "dash-key", "shoot", "between", "spin", "post", "fake", "first-person", "third-person"]
+    "shot-type", "dunk-hint", "menu", "menu-title", "summary", "difficulty", "start", "dash", "dash-key", "shoot", "between", "spin", "post", "first-person", "third-person"]
     .map((id) => [id, document.getElementById(id)])
 )
 const engine = createEngine({
@@ -22,7 +22,6 @@ const input = createInput({
     between: ["KeyJ", "TouchBetween"],
     spin: ["KeyK", "TouchSpin"],
     post: ["KeyB", "TouchPost"],
-    fake: ["KeyF", "TouchFake"],
     camera: ["KeyV"],
   },
 })
@@ -62,7 +61,7 @@ const moveSide = new THREE.Vector3()
 const betweenFeet = new THREE.Vector3()
 const dribbleHand = new THREE.Vector3()
 const crossoverDuration = 0.18
-const chainActions = ["jump", "sprint", "spin", "between", "fake", "post"]
+const chainActions = ["jump", "sprint", "spin", "between", "post"]
 const dribbleMoves = {
   between: { duration: 0.31, width: 0.92, drive: 0.16, reactionAt: 0.21, reactionDelay: 0.22 },
   spin: { duration: 0.62, width: 2.75, drive: 0.75, reactionAt: 0.53, reactionDelay: 0.23 },
@@ -74,7 +73,8 @@ const palmRadius = 0.055
 const ballRadius = 0.12
 const postStepDuration = 0.22
 const postBounceRate = 8.2
-const fakeDuration = 0.28
+const shotHoldThreshold = 0.17
+const fakeDuration = 0.20
 const waypoint = new THREE.Vector3()
 const toRim = new THREE.Vector3()
 const netPreviousBall = new THREE.Vector3()
@@ -107,7 +107,6 @@ let remaining = clockDuration
 let charge = 0
 let airborne = 0
 let fake = 0
-let fakeCooldown = 0
 let stride = 0
 let robotStride = 0
 let dash = 0
@@ -152,7 +151,7 @@ function refreshScore() {
 
 function prepareRound() {
   remaining = clockDuration
-  fake = fakeCooldown = 0
+  fake = 0
   charge = airborne = stride = robotStride = dash = dashCooldown = 0
   defendTime = defendCooldown = recovery = reactionUntil = 0
   defend = "guard"
@@ -369,9 +368,8 @@ function timingWindow() {
   return THREE.MathUtils.lerp(0.155, 0.032, range) * (1 - pressure() * 0.34) * difficulty.shotWindow
 }
 
-function canDunk() {
-  return !charge && !fake && !dribble && basketDistance() <= court.dunkRange &&
-    player.root.position.z >= rim.z - court.dunkBackEdge
+function inDunkZone() {
+  return basketDistance() <= court.dunkRange && player.root.position.z >= rim.z - court.dunkBackEdge
 }
 
 function startDunk() {
@@ -381,6 +379,8 @@ function startDunk() {
   const landing = rim.clone().setY(0).addScaledVector(direction.normalize(), 0.53)
   dunk = { origin, landing, time: 0, ballOrigin: ball.position.clone(), made: false }
   phase = "dunk"
+  charge = fake = 0
+  ui.meter.hidden = true
   pendingAction = null
   attempts++
   dash = 0
@@ -574,7 +574,7 @@ function updateRobot(dt, elapsed = 0) {
     robotVelocity.lerp(delta, 1 - Math.exp(-18 * difficulty.speed * dt))
     position.addScaledVector(robotVelocity, dt)
     if (defend === "guard" && defendCooldown <= 0) {
-      const bites = fake > 0.07 && space() < 1.65 * difficulty.armLength
+      const bites = fake > 0.045 && space() < 1.65 * difficulty.armLength
       if (bites || (charge > 0.21 && space() < 1.72 * difficulty.armLength)) {
         beginDefense("block")
         if (bites) ui.callout.textContent = "骗起防守！"
@@ -630,13 +630,15 @@ function pose(dt, elapsed = 0) {
   const progress = dribble ? clamp(dribble.time / dribble.duration, 0, 1) : 0
   const split = dribble?.kind === "between" ? Math.sin(Math.PI * progress) : 0
   const dribblingHand = dribble && progress > 0.45 ? dribble.toHand : ballSide
-  const fakeLift = fake ? Math.sin(Math.PI * fake / fakeDuration) : 0
+  const gather = charge > 0 && charge < shotHoldThreshold
+  const fakeLift = fake ? Math.sin(Math.PI * fake / fakeDuration)
+    : gather ? THREE.MathUtils.smoothstep(charge, 0, shotHoldThreshold) : 0
   const crossProgress = crossover ? clamp((elapsed - crossover.started) / crossoverDuration, 0, 1) : 0
   const crouch = charge ? 1 - THREE.MathUtils.smoothstep(charge, 0.10, 0.29)
     : shooting || dunk ? 0.10 : post || dribble || crossover ? 1 : running ? 0.80 : 0.65
   airborne = Math.max(0, airborne - dt)
   player.root.position.y = charge
-    ? 0.48 * Math.sin(Math.PI * clamp((charge - 0.12) / 0.99, 0, 1))
+    ? 0.48 * Math.sin(Math.PI * clamp((charge - shotHoldThreshold) / 0.94, 0, 1))
     : airborne * 0.8
   const dunkLift = dunk ? Math.sin(Math.PI * dunk.time / dunkDuration) : 0
   if (dunk) player.root.position.y = 1.28 * dunkLift
@@ -673,7 +675,7 @@ function pose(dt, elapsed = 0) {
       player.elbows[i].rotation.x = -0.55
     }
 
-    if (fake) {
+    if (fake || gather) {
       player.arms[i].rotation.x = -0.45 - fakeLift * 1.85
       player.arms[i].rotation.z = side * 0.08
       player.elbows[i].rotation.x = -0.48 - fakeLift * 0.23
@@ -837,15 +839,14 @@ function updateFlight(dt) {
 function takeChainedAction() {
   const pressed = chainActions.find((action) => input.pressed(action))
   if (pressed) pendingAction = pressed
-  if (!pendingAction || dribble || dash > 0 || fake || charge || post?.time > 0 || remaining <= 0) return null
+  if (!pendingAction || dribble || dash > 0 || charge || post?.time > 0 || remaining <= 0) return null
+  if (fake && pendingAction !== "jump") return null
   if (pendingAction === "sprint" && dashCooldown > 0) return null
-  if (pendingAction === "fake" && fakeCooldown > 0) return null
 
   const action = pendingAction
   pendingAction = null
   // A different move starts a new combination. Only immediate repeats wait.
   if (action !== "sprint") dashCooldown = 0
-  if (action !== "fake") fakeCooldown = 0
   return action
 }
 
@@ -857,7 +858,6 @@ function updatePlay(dt, elapsed) {
   ui.clock.classList.toggle("urgent", remaining < 4)
   dashCooldown = Math.max(0, dashCooldown - dt)
   dash = Math.max(0, dash - dt)
-  fakeCooldown = Math.max(0, fakeCooldown - dt)
   if (fake) {
     fake += dt
     if (fake >= fakeDuration) {
@@ -897,23 +897,22 @@ function updatePlay(dt, elapsed) {
       }
     }
   }
-  if (action === "fake") {
-    finishCrossover(elapsed, true)
-    fake = Number.EPSILON
-    fakeCooldown = 0.90
-    dash = 0
-    ui.callout.textContent = "投篮假动作"
-  }
   if (action === "jump") {
     finishCrossover(elapsed, true)
-    if (canDunk()) {
-      startDunk()
-      return
-    }
+    fake = 0
     charge = Number.EPSILON
-    dash = 0
   }
-  if (charge) charge += dt
+  const letGo = input.released("jump") || !input.down("jump")
+  if (charge && !letGo) charge += dt
+  if (charge && letGo && charge < shotHoldThreshold) {
+    fake = 0.06
+    charge = 0
+    ui.meter.hidden = true
+    if (defend !== "block") ui.callout.textContent = "投篮假动作"
+  } else if (charge >= shotHoldThreshold && remaining > 0 && inDunkZone()) {
+    startDunk()
+    return
+  }
   updateHeldBall(elapsed)
   updateRobot(dt, elapsed)
   pose(dt, elapsed)
@@ -928,7 +927,7 @@ function updatePlay(dt, elapsed) {
     finishRound("进攻时间到")
     return
   }
-  if (!charge) return
+  if (charge < shotHoldThreshold) return
   const width = timingWindow()
   const green = ui.meter.querySelector(".green")
   green.style.left = 100 * (ideal - width) / maxCharge + "%"
@@ -936,14 +935,14 @@ function updatePlay(dt, elapsed) {
   ui.needle.style.left = Math.min(100, 100 * charge / maxCharge) + "%"
   ui["shot-type"].textContent = basketDistance() < layupRange ? "上篮" : "跳投"
   ui.meter.hidden = false
-  if (input.released("jump") || !input.down("jump") || charge >= maxCharge) shoot()
+  if (letGo || charge >= maxCharge) shoot()
 }
 
 if (input.touch) {
-  ui.summary.textContent = "10 个进攻回合，每回合 12 秒。拖动左半屏移动。左右移动会自动换手，快速反向可以变向，按住投篮并在绿色区域松手。"
+  ui.summary.textContent = "10 个进攻回合，每回合 12 秒。拖动左半屏移动。左右移动会自动换手，快速反向可以变向。短点投篮做假动作，按住后在绿色区域松手出手。"
 }
 ui.start.addEventListener("click", startMatch)
-for (const [button, code] of [[ui.dash, "TouchDash"], [ui.between, "TouchBetween"], [ui.spin, "TouchSpin"], [ui.post, "TouchPost"], [ui.fake, "TouchFake"], [ui.shoot, "Space"]]) {
+for (const [button, code] of [[ui.dash, "TouchDash"], [ui.between, "TouchBetween"], [ui.spin, "TouchSpin"], [ui.post, "TouchPost"], [ui.shoot, "Space"]]) {
   button.addEventListener("pointerdown", (event) => {
     button.setPointerCapture(event.pointerId)
     input.press(code)
@@ -1016,7 +1015,7 @@ engine.onUpdate((dt, elapsed) => {
     if (resultTime <= 0) nextRound()
   }
   net.update(dt, netPreviousBall, ballInFlight ? ball.position : null)
-  const dunkReady = phase === "play" && canDunk()
+  const dunkReady = phase === "play" && !dribble && inDunkZone()
   dunkZone.material.opacity = dunkReady ? 0.52 : 0.27
   impactLight.intensity *= Math.exp(-12 * dt)
   ui["dunk-hint"].hidden = !dunkReady
