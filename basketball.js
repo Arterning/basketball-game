@@ -76,6 +76,7 @@ const previousPalm = new THREE.Vector3()
 const previousDribbleBall = new THREE.Vector3()
 const handAim = new THREE.Vector3()
 const dribblePalm = new THREE.Vector3()
+const solePoint = new THREE.Vector3()
 const downArm = new THREE.Vector3(0, -1, 0)
 const reachRotation = new THREE.Quaternion()
 const contactOrigin = new THREE.Vector3()
@@ -598,6 +599,15 @@ function updateRobot(dt, elapsed = 0) {
   face(robot, playerPos.x, playerPos.z)
 }
 
+function plantStance(actor) {
+  const lift = actor.root.position.y
+  actor.rig.position.y = 0
+  const left = actor.feet[0].localToWorld(solePoint.set(0, -0.070, 0.06)).y
+  const right = actor.feet[1].localToWorld(solePoint.set(0, -0.070, 0.06)).y
+  const grounded = 1 - THREE.MathUtils.smoothstep(lift, 0, 0.30)
+  actor.rig.position.y = (lift - Math.min(left, right)) * grounded
+}
+
 function pose(dt, elapsed = 0) {
   const running = phase === "play" && playerVelocity.lengthSq() > 0.1
   const shooting = charge > 0 || airborne > 0
@@ -606,35 +616,42 @@ function pose(dt, elapsed = 0) {
   const dribblingHand = dribble && progress > 0.45 ? dribble.toHand : ballSide
   const fakeLift = fake ? Math.sin(Math.PI * fake / fakeDuration) : 0
   const crossProgress = crossover ? clamp((elapsed - crossover.started) / crossoverDuration, 0, 1) : 0
-  const crouch = charge ? Math.max(0, 1 - charge / 0.19) : post || dribble || crossover ? 0.78 : running ? 0.35 : 0.10
+  const crouch = charge ? 1 - THREE.MathUtils.smoothstep(charge, 0.10, 0.29)
+    : shooting || dunk ? 0.10 : post || dribble || crossover ? 1 : running ? 0.80 : 0.65
   airborne = Math.max(0, airborne - dt)
   player.root.position.y = charge
     ? 0.48 * Math.sin(Math.PI * clamp((charge - 0.12) / 0.99, 0, 1))
     : airborne * 0.8
   const dunkLift = dunk ? Math.sin(Math.PI * dunk.time / dunkDuration) : 0
   if (dunk) player.root.position.y = 1.28 * dunkLift
-  player.rig.position.y = -0.10 * crouch - fakeLift * 0.08
   const postEffort = post ? Math.sin(Math.PI * post.time / postStepDuration) : 0
-  player.torso.rotation.x = post ? -0.12 - 0.20 * postEffort : 0.20 * crouch
-  player.torso.rotation.z = crossover ? crossover.toHand * Math.sin(crossProgress * Math.PI) * 0.19 : 0
+  const playerAngle = player.root.rotation.y
+  const lateralDrive = playerVelocity.x * Math.cos(playerAngle) - playerVelocity.z * Math.sin(playerAngle)
+  const playerLean = clamp(lateralDrive * -0.039, -0.24, 0.24)
+  player.waist.rotation.x = post ? -0.11 - 0.20 * postEffort : 0.38 * crouch + 0.09 * fakeLift
+  player.waist.rotation.z = crossover
+    ? crossover.toHand * Math.sin(crossProgress * Math.PI) * -0.26 : playerLean
   const jumping = defend === "block" && defendTime > 0.12
   robot.root.position.y = jumping ? Math.max(0, 0.94 * Math.sin(Math.PI * (defendTime - 0.12) / 0.57)) : 0
-  robot.rig.position.y = jumping ? 0 : -0.095
-  robot.torso.rotation.x = jumping ? 0 : defend === "steal" ? 0.32 : 0.15
+  const robotAngle = robot.root.rotation.y
+  const lateralShuffle = robotVelocity.x * Math.cos(robotAngle) - robotVelocity.z * Math.sin(robotAngle)
+  const defenderCrouch = 1 - THREE.MathUtils.smoothstep(robot.root.position.y, 0, 0.24)
+  robot.waist.rotation.x = defenderCrouch * (defend === "steal" ? 0.48 : 0.39)
+  robot.waist.rotation.z = defenderCrouch * clamp(-lateralShuffle * 0.043, -0.22, 0.22)
   const shuffling = postEffort > 0 || robotVelocity.lengthSq() > 0.12
   for (let i = 0; i < 2; i++) {
     const side = i === 0 ? -1 : 1
     const step = side * Math.sin(stride)
     const handOnBall = side === dribblingHand
-    player.legs[i].rotation.x = running ? step * 0.63 - 0.12 : -0.25 * crouch
-    player.knees[i].rotation.x = 0.50 * crouch + (running ? Math.max(0, -step) * 0.70 : 0)
-    player.feet[i].rotation.x = -0.55 * (player.legs[i].rotation.x + player.knees[i].rotation.x)
+    player.legs[i].rotation.x = -0.73 * crouch + (running ? step * 0.45 : 0.06 * side)
+    player.legs[i].rotation.z = side * 0.21 * crouch + (running ? clamp(lateralDrive * 0.027, -0.14, 0.14) : 0)
+    player.knees[i].rotation.x = 1.28 * crouch + (running ? Math.max(0, -step) * 0.43 : 0)
     player.arms[i].rotation.x = shooting ? -2.24 : handOnBall ? -0.57 - 0.20 * Math.cos(elapsed * 13) : -0.35 - step * 0.22
     player.arms[i].rotation.z = shooting ? side * 0.06 : side * (handOnBall ? 0.23 : 0.35)
     player.elbows[i].rotation.x = shooting ? -0.40 - 0.20 * (airborne > 0) : handOnBall ? -0.38 : -0.51
 
     if (protecting && handOnBall) {
-      player.arms[i].rotation.x = post ? -0.56 : 0.63
+      player.arms[i].rotation.x = post ? -0.56 : 0.95
       player.arms[i].rotation.z = side * 0.32
       player.elbows[i].rotation.x = -0.55
     }
@@ -647,8 +664,8 @@ function pose(dt, elapsed = 0) {
     }
 
     if (post) {
-      player.legs[i].rotation.x = 0.17 + step * postEffort * 0.52
-      player.knees[i].rotation.x = 0.40 + postEffort * 0.35
+      player.legs[i].rotation.x = -0.60 + step * postEffort * 0.33
+      player.knees[i].rotation.x = 1.10 + postEffort * 0.24
       player.arms[i].rotation.x = handOnBall ? -0.70 : -0.36
       player.arms[i].rotation.z = side * 0.33
     }
@@ -671,22 +688,28 @@ function pose(dt, elapsed = 0) {
       player.elbows[i].rotation.x = -0.29 - 0.24 * slam
     }
 
+    player.feet[i].rotation.x = -(player.legs[i].rotation.x + player.knees[i].rotation.x)
+    player.feet[i].rotation.z = -player.legs[i].rotation.z * 0.75
+
     const shuffle = shuffling ? Math.sin(robotStride) : 0
-    robot.legs[i].rotation.x = jumping ? -0.13 : -0.28 + (chasing ? side * shuffle * 0.54 : 0)
-    robot.legs[i].rotation.z = jumping ? 0 : side * 0.12 + (chasing ? 0 : shuffle * 0.14)
-    robot.knees[i].rotation.x = jumping ? 0.23 : 0.58 + Math.max(0, side * shuffle) * 0.22
-    robot.feet[i].rotation.x = -(robot.legs[i].rotation.x + robot.knees[i].rotation.x) * 0.68
+    robot.legs[i].rotation.x = -0.13 - 0.69 * defenderCrouch + (chasing ? side * shuffle * 0.48 : 0)
+    robot.legs[i].rotation.z = defenderCrouch * (side * 0.35 + (chasing ? 0 : shuffle * 0.14))
+    robot.knees[i].rotation.x = 0.23 + defenderCrouch * (1.20 + Math.max(0, side * shuffle) * 0.23)
+    robot.feet[i].rotation.x = -(robot.legs[i].rotation.x + robot.knees[i].rotation.x)
+    robot.feet[i].rotation.z = -robot.legs[i].rotation.z * 0.78
     robot.arms[i].rotation.x = defend === "block" ? (jumping ? -2.42 : -1.1)
       : defend === "steal" ? (defendTime >= stealReadyAt ? -1.37 : -0.58) : -0.35
     if (post) robot.arms[i].rotation.x = -0.72 - 0.30 * postEffort
     robot.arms[i].rotation.z = side * (defend === "block" ? 0.17 : 0.45)
     robot.elbows[i].rotation.x = defend === "block" ? -0.19 : defend === "steal" && defendTime >= stealReadyAt ? -0.15 : -0.52
-    if (defend === "steal" && i === stealHand && defendTime >= stealReadyAt) {
-      const arm = robot.arms[i]
-      robot.torso.worldToLocal(handAim.copy(ball.position)).sub(arm.position).normalize()
-      reachRotation.setFromUnitVectors(downArm, handAim)
-      arm.quaternion.slerp(reachRotation, THREE.MathUtils.smoothstep(defendTime, stealReadyAt, stealReadyAt + 0.065))
-    }
+  }
+  plantStance(player)
+  plantStance(robot)
+  if (defend === "steal" && defendTime >= stealReadyAt) {
+    const arm = robot.arms[stealHand]
+    robot.torso.worldToLocal(handAim.copy(ball.position)).sub(arm.position).normalize()
+    reachRotation.setFromUnitVectors(downArm, handAim)
+    arm.quaternion.slerp(reachRotation, THREE.MathUtils.smoothstep(defendTime, stealReadyAt, stealReadyAt + 0.065))
   }
   player.marker.scale.setScalar(dash > 0 && phase === "play" ? 1.22 : 1)
   player.marker.position.set(player.root.position.x, 0, player.root.position.z)
@@ -871,7 +894,7 @@ function updateCamera(dt) {
     // Keep the aim stable through spin moves and when standing under the hoop.
     if (distance > 0.45) viewDirection.copy(cameraGoal).divideScalar(distance)
     cameraGoal.copy(position).addScaledVector(viewDirection, 0.18)
-    const eyeHeight = position.y + 1.63
+    const eyeHeight = position.y + 1.63 + player.rig.position.y * 0.80
     cameraGoal.y = cameraChanged ? eyeHeight
       : THREE.MathUtils.lerp(engine.camera.position.y, eyeHeight, 1 - Math.exp(-16 * dt))
     engine.camera.position.copy(cameraGoal)

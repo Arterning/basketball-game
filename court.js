@@ -142,7 +142,8 @@ function jerseyNumber(parent, number) {
 export function makePlayer(scene, robot) {
   const root = new THREE.Group()
   const rig = joint(root, 0, 0)
-  const torso = joint(rig, 0, 0)
+  const waist = joint(rig, 0, 0.88)
+  const torso = joint(waist, 0, -0.88)
   const uniform = matte(robot ? "#b63a25" : "#17528e")
   const shorts = matte(robot ? "#702317" : "#132d4a")
   const trim = matte(robot ? "#ffbe63" : "#94daed")
@@ -207,7 +208,7 @@ export function makePlayer(scene, robot) {
   const marker = new THREE.Group()
   ring(marker, tag, 0, 0.033, 0, 0.48, 0.046)
   scene.add(root, marker)
-  return { root, rig, torso, head, marker, arms, elbows, legs, knees, feet, hands }
+  return { root, rig, waist, torso, head, marker, arms, elbows, legs, knees, feet, hands }
 }
 
 export function makeBall(scene) {
