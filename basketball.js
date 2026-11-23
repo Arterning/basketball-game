@@ -63,8 +63,8 @@ const betweenFeet = new THREE.Vector3()
 const dribbleHand = new THREE.Vector3()
 const crossoverDuration = 0.18
 const dribbleMoves = {
-  between: { duration: 0.31, width: 0.65, drive: 0.36, recovery: 0.20 },
-  spin: { duration: 0.62, width: 2.75, drive: 0.75, recovery: 0.44 },
+  between: { duration: 0.31, width: 0.92, drive: 0.16, recovery: 0.20, reactionAt: 0.21, reactionDelay: 0.22 },
+  spin: { duration: 0.62, width: 2.75, drive: 0.75, recovery: 0.44, reactionAt: 0.53, reactionDelay: 0.23 },
 }
 const stealWindup = 0.32
 const crossoverStealWindup = 0.065
@@ -118,6 +118,7 @@ let stealHand = 0
 let stealReadyAt = stealWindup
 let defendCooldown = 0
 let recovery = 0
+let reactionUntil = 0
 let resultTime = 0
 let shot = null
 let dunk = null
@@ -152,7 +153,7 @@ function prepareRound() {
   remaining = clockDuration
   fake = fakeCooldown = 0
   charge = airborne = stride = robotStride = dash = dashCooldown = 0
-  defendTime = defendCooldown = recovery = 0
+  defendTime = defendCooldown = recovery = reactionUntil = 0
   defend = "guard"
   stealEvaded = false
   dribble = null
@@ -235,8 +236,11 @@ function startDribbleMove(kind, elapsed) {
   const hoopAngle = Math.atan2(moveForward.x, moveForward.z)
   const offset = THREE.MathUtils.euclideanModulo((hoopAngle - player.root.rotation.y) * side, Math.PI * 2)
   const sweep = offset > Math.PI / 2 && offset < Math.PI * 1.5 ? offset : Math.PI * 2
-  const { duration, width, drive, recovery: cooldown } = dribbleMoves[kind]
-  dribble = { kind, side, time: 0, toHand: -ballSide, sweep, duration, width, drive, startHeight: ball.position.y }
+  const { duration, width, drive, recovery: cooldown, reactionAt, reactionDelay } = dribbleMoves[kind]
+  dribble = {
+    kind, side, time: 0, toHand: -ballSide, sweep, duration, width, drive,
+    startHeight: ball.position.y, reactionAt, reactionDelay: space() < 2.25 ? reactionDelay : 0,
+  }
   dribbleCooldown = duration + cooldown
   lastLateral = 0
   lastLateralAt = -Infinity
@@ -556,8 +560,9 @@ function updateRobot(dt, elapsed = 0) {
   if (phase !== "play" && defend === "steal") recover(0.68)
   const oldX = position.x
   const oldZ = position.z
+  const canTrack = defend === "guard" && recovery <= 0 && elapsed >= reactionUntil
   const windingUp = defend === "steal" && defendTime < stealReadyAt
-  if (phase === "play" && ((defend === "guard" && recovery <= 0) || windingUp)) {
+  if (phase === "play" && (canTrack || windingUp)) {
     toRim.set(-playerPos.x, 0, rim.z - playerPos.z).normalize()
     delta.set(position.x - playerPos.x, 0, position.z - playerPos.z)
     chasing = !windingUp && !charge && delta.dot(toRim) < -0.16 && basketDistance() > 1.35
@@ -860,6 +865,10 @@ function updatePlay(dt, elapsed) {
   }
   if (dribble) {
     dribble.time += dt
+    if (dribble.reactionDelay && dribble.time >= dribble.duration * dribble.reactionAt) {
+      if (defend === "guard" && recovery <= 0) reactionUntil = elapsed + dribble.reactionDelay
+      dribble.reactionDelay = 0
+    }
     if (dribble.time >= dribble.duration) {
       ballSide = dribble.toHand
       bounceStarted = elapsed
