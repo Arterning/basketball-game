@@ -31,9 +31,9 @@ const robot = makePlayer(engine.scene, true)
 const ball = makeBall(engine.scene)
 
 const difficulties = {
-  easy: { speed: 0.86, shotWindow: 1.25, height: 1, armLength: 1, blockStep: 0 },
-  normal: { speed: 1.18, shotWindow: 1, height: 1, armLength: 1, blockStep: 0 },
-  hard: { speed: 1.76, shotWindow: 0.72, height: 1.23, armLength: 1.28, blockStep: 2.8 },
+  easy: { speed: 0.86, shotWindow: 1.25, height: 1, armLength: 1, blockStep: 0, guardGap: 1.02 },
+  normal: { speed: 1.18, shotWindow: 1, height: 1, armLength: 1, blockStep: 0, guardGap: 0.91 },
+  hard: { speed: 1.76, shotWindow: 0.72, height: 1.23, armLength: 1.28, blockStep: 2.8, guardGap: 0.82 },
 }
 
 const rounds = 10
@@ -475,19 +475,21 @@ function updateRobot(dt) {
   }
   const oldX = position.x
   const oldZ = position.z
-  if (defend === "guard" && recovery <= 0 && phase === "play") {
+  const windingUp = defend === "steal" && defendTime < 0.32
+  if (phase === "play" && ((defend === "guard" && recovery <= 0) || windingUp)) {
     toRim.set(-playerPos.x, 0, rim.z - playerPos.z).normalize()
     delta.set(position.x - playerPos.x, 0, position.z - playerPos.z)
-    chasing = !charge && delta.dot(toRim) < -0.16 && basketDistance() > 1.35
+    chasing = !windingUp && !charge && delta.dot(toRim) < -0.16 && basketDistance() > 1.35
     const driveSpeed = playerVelocity.dot(toRim)
-    waypoint.copy(playerPos).addScaledVector(playerVelocity, 0.20)
-    waypoint.addScaledVector(toRim, (chasing ? 2.3 : 1.08) - driveSpeed * 0.20)
-    delta.set(waypoint.x - position.x, 0, waypoint.z - position.z)
-    const limit = (charge ? 2.25 : chasing ? 6.15 : 4.85) * difficulty.speed
-    delta.clampLength(0, limit * 0.14).multiplyScalar(1 / 0.14)
-    robotVelocity.lerp(delta, 1 - Math.exp(-(chasing ? 11 : 8) * difficulty.speed * dt))
+    waypoint.copy(playerPos).addScaledVector(toRim, chasing ? 2.3 : difficulty.guardGap)
+    // Match lateral movement immediately, while correcting toward the line to the hoop.
+    delta.subVectors(waypoint, position).setY(0).multiplyScalar(10)
+    delta.add(playerVelocity).addScaledVector(toRim, -driveSpeed)
+    const limit = (charge ? 2.25 : chasing ? 7 : 5.6) * difficulty.speed
+    delta.clampLength(0, windingUp ? limit * 0.75 : limit)
+    robotVelocity.lerp(delta, 1 - Math.exp(-18 * difficulty.speed * dt))
     position.addScaledVector(robotVelocity, dt)
-    if (defendCooldown <= 0) {
+    if (defend === "guard" && defendCooldown <= 0) {
       const bites = fake > 0.07 && space() < 1.65 * difficulty.armLength
       if (bites || (charge > 0.21 && space() < 1.72 * difficulty.armLength)) {
         beginDefense("block")
