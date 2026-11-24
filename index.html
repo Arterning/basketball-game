@@ -42,8 +42,9 @@
     <main id="arena" aria-label="半场篮球场"></main>
     <header class="scoreboard" aria-label="比分板">
       <h1>半场单挑</h1>
-      <div><span>得分</span><strong id="score">0</strong></div>
-      <div><span>回合</span><strong id="round">1 / 10</strong></div>
+      <div><span>你</span><strong id="score">0</strong></div>
+      <div><span>机器人</span><strong id="robot-score">0</strong></div>
+      <div><span>当前</span><strong id="possession">进攻</strong></div>
       <div><span>进攻时间</span><strong id="clock">12.0</strong></div>
       <div><span>命中率</span><strong id="accuracy">—</strong></div>
     </header>
@@ -56,7 +57,7 @@
     <section id="menu">
       <div>
         <h2 id="menu-title">挑战陪练机器人</h2>
-        <p id="summary">10 个进攻回合，每回合 12 秒。拉开空间，在绿色区域松开空格出手。</p>
+        <p id="summary">先进 10 球获胜。进球继续进攻，投丢或失误则交换球权。</p>
         <label class="difficulty-setting" for="difficulty">
           <span>难度</span>
           <select id="difficulty">
@@ -68,7 +69,7 @@
         <button id="start" type="button">开始挑战</button>
       </div>
     </section>
-    <footer><span><kbd>WASD</kbd> 移动</span><span>左右移动自动换手</span><span><kbd>J</kbd> 胯下</span><span><kbd>K</kbd> 转身</span><span><kbd id="dash-key">L</kbd> 加速</span><span><kbd>B</kbd> 背打</span><span><kbd>空格</kbd> 短按假投 · 长按蓄力投篮</span><span><kbd>V</kbd> 切换视角</span><span><kbd>R</kbd> 重开</span></footer>
+    <footer><span><kbd>WASD</kbd> 移动</span><span class="offense-only">左右移动自动换手</span><span class="offense-only"><kbd>J</kbd> 胯下</span><span class="offense-only"><kbd>K</kbd> 转身</span><span class="offense-only"><kbd id="dash-key">L</kbd> 加速</span><span class="offense-only"><kbd>B</kbd> 背打</span><span class="offense-only"><kbd>空格</kbd> 短按假投 · 长按蓄力投篮</span><span class="defense-only"><kbd>空格</kbd> 封盖</span><span class="defense-only"><kbd>J</kbd> 抢断</span><span><kbd>V</kbd> 切换视角</span><span><kbd>R</kbd> 重开</span></footer>
     <div id="camera-options" role="group" aria-label="镜头视角，快捷键 V">
       <button id="third-person" type="button" aria-pressed="true">第三人称</button>
       <button id="first-person" type="button" aria-pressed="false">第一人称</button>

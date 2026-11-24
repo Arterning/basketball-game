@@ -6,7 +6,7 @@ import { createInput } from "./engine/input.js"
 import { buildCourt, court, makeBall, makePlayer } from "./court.js"
 
 const ui = Object.fromEntries(
-  ["arena", "score", "round", "clock", "accuracy", "callout", "meter", "needle",
+  ["arena", "score", "robot-score", "possession", "clock", "accuracy", "callout", "meter", "needle",
     "shot-type", "dunk-hint", "menu", "menu-title", "summary", "difficulty", "start", "dash", "dash-key", "shoot", "between", "spin", "post", "first-person", "third-person"]
     .map((id) => [id, document.getElementById(id)])
 )
@@ -36,7 +36,7 @@ const difficulties = {
   hard: { speed: 1.76, shotWindow: 0.72, height: 1.23, armLength: 1.28, blockStep: 2.8, guardGap: 0.82 },
 }
 
-const rounds = 10
+const winningBaskets = 10
 const clockDuration = 12
 const maxCharge = 0.94
 const ideal = 0.57
@@ -99,7 +99,14 @@ let firstPerson = false
 let cameraChanged = true
 let phase = "menu"
 let difficulty = difficulties.normal
-let score = 0
+let possession = "player"
+let keepsPossession = false
+let robotMakes = 0
+let playerDefense = null
+let playerDefenseCooldown = 0
+let robotGather = 0
+let robotAttackTime = 0
+let robotBallHand = 0
 let round = 1
 let makes = 0
 let attempts = 0
@@ -149,13 +156,17 @@ function face(actor, x, z) {
 }
 
 function refreshScore() {
-  ui.score.textContent = score
-  ui.round.textContent = round + " / " + rounds
+  ui.score.textContent = makes
+  ui["robot-score"].textContent = robotMakes
+  ui.possession.textContent = possession === "player" ? "进攻" : "防守"
   ui.accuracy.textContent = attempts ? Math.round(100 * makes / attempts) + "%" : "—"
 }
 
 function prepareRound() {
   remaining = clockDuration
+  playerDefense = null
+  playerDefenseCooldown = robotGather = robotAttackTime = 0
+  robotBallHand = round % 2
   fake = 0
   charge = airborne = stride = robotStride = dash = dashCooldown = 0
   defendTime = defendCooldown = recovery = reactionUntil = 0
@@ -175,12 +186,16 @@ function prepareRound() {
   shot = dunk = null
   ui["dunk-hint"].hidden = true
   const x = [0, -2.8, 2.8][(round - 1) % 3]
-  player.root.position.set(x, 0, 1.8)
-  robot.root.position.set(x * 0.72, 0, -0.65)
-  face(player, 0, court.rimZ)
-  face(robot, x, 1.8)
+  const attacker = possession === "player" ? player : robot
+  const defender = possession === "player" ? robot : player
+  attacker.root.position.set(x, 0, 1.8)
+  defender.root.position.set(x * 0.72, 0, -0.65)
+  face(attacker, 0, court.rimZ)
+  face(defender, x, 1.8)
+  document.body.classList.toggle("defending", possession === "robot")
   pose(0)
-  updateHeldBall(0)
+  if (possession === "player") updateHeldBall(0)
+  else updateRobotBall()
   ui.meter.hidden = true
   ui.callout.textContent = ""
   ui.clock.textContent = timestamp()
@@ -192,7 +207,8 @@ function startMatch() {
   difficulty = difficulties[ui.difficulty.value]
   robot.rig.scale.y = difficulty.height
   for (const arm of robot.arms) arm.scale.y = difficulty.armLength
-  score = makes = attempts = 0
+  possession = "player"
+  makes = robotMakes = attempts = 0
   round = 1
   prepareRound()
   phase = "play"
@@ -200,7 +216,8 @@ function startMatch() {
   ui.start.blur()
 }
 
-function finishRound(message) {
+function finishRound(message, made = false) {
+  keepsPossession = made
   phase = "result"
   resultTime = 1.3
   dribble = crossover = post = pendingAction = null
@@ -211,16 +228,18 @@ function finishRound(message) {
 }
 
 function nextRound() {
-  if (round < rounds) {
+  if (makes < winningBaskets && robotMakes < winningBaskets) {
+    if (!keepsPossession) possession = possession === "player" ? "robot" : "player"
     round++
     prepareRound()
     phase = "play"
+    ui.callout.textContent = possession === "player" ? "你的球权" : "机器人球权 · 注意防守"
     return
   }
   phase = "menu"
   ui.menu.hidden = false
-  ui["menu-title"].textContent = "挑战结束"
-  ui.summary.textContent = "总得分 " + score + " · " + "命中 " + makes + " 球 / 出手 " + attempts + " 次"
+  ui["menu-title"].textContent = makes >= winningBaskets ? "你赢了！" : "机器人获胜"
+  ui.summary.textContent = "最终比分  " + makes + " : " + robotMakes
   ui.start.textContent = "再打一局"
   ui.callout.textContent = ""
 }
@@ -402,9 +421,9 @@ function startDunk() {
   refreshScore()
 }
 
-function registerBasket(points, message) {
-  makes++
-  score += points
+function registerBasket(message) {
+  if (possession === "player") makes++
+  else robotMakes++
   ui.callout.textContent = message
   refreshScore()
 }
@@ -441,14 +460,14 @@ function updateDunk(dt, elapsed) {
     ball.position.y = Math.max(0.12, rim.y + 0.18 - 4.9 * fall - 0.5 * gravity * fall ** 2)
     if (!dunk.made && ball.position.y <= rim.y) {
       dunk.made = true
-      registerBasket(2, "双手暴扣！ +2")
+      registerBasket("双手暴扣！")
       playDunkImpact()
     }
   }
 
   if (dunk.time >= dunkDuration) {
     dunk = null
-    finishRound("双手暴扣！ +2")
+    finishRound("双手暴扣！", true)
   }
 }
 
@@ -456,7 +475,6 @@ function shoot() {
   const error = charge - ideal
   const distance = basketDistance()
   const width = timingWindow()
-  const points = distance > court.arc || Math.abs(player.root.position.x) > 5.96 ? 3 : 2
   const timingError = Math.abs(error) / width
   const miss = timingError <= 1 ? timingError * 0.085 : 0.26 + (timingError - 1) * 0.095
   const target = rim.clone()
@@ -472,7 +490,7 @@ function shoot() {
     delta.length() < 1.28 && toRim.dot(delta.normalize()) > 0.45
   const velocity = target.sub(ball.position).divideScalar(time)
   velocity.y += gravity * time / 2
-  shot = { origin: ball.position.clone(), velocity, time: 0, points, smothered, made: false, blocked: false }
+  shot = { origin: ball.position.clone(), velocity, time: 0, smothered, made: false, blocked: false }
   pendingAction = null
   attempts++
   phase = "flight"
@@ -505,8 +523,12 @@ function canStealDribble(elapsed) {
   return ball.position.y < dribblePalm.y - 0.14
 }
 
+function getPalmFor(actor, index, target) {
+  return actor.hands[index].localToWorld(target.set(0, -0.029, 0))
+}
+
 function getPalm(index, target) {
-  return robot.hands[index].localToWorld(target.set(0, -0.029, 0))
+  return getPalmFor(robot, index, target)
 }
 
 function resolveSteal(dt, elapsed) {
@@ -826,27 +848,170 @@ function updateHeldBall(elapsed) {
   }
 }
 
+function updatePlayerDefense(dt) {
+  playerDefenseCooldown = Math.max(0, playerDefenseCooldown - dt)
+  if (playerDefense) {
+    playerDefense.time += dt
+    if (playerDefense.time >= (playerDefense.kind === "block" ? 0.62 : 0.43)) playerDefense = null
+  }
+  if (!playerDefense && !playerDefenseCooldown) {
+    if (input.pressed("jump")) {
+      playerDefense = { kind: "block", time: 0 }
+      playerDefenseCooldown = 0.83
+    } else if (phase === "play" && input.pressed("between")) {
+      getPalmFor(player, 0, robotHand)
+      getPalmFor(player, 1, dribblePalm)
+      const hand = robotHand.distanceToSquared(ball.position) <= dribblePalm.distanceToSquared(ball.position) ? 0 : 1
+      playerDefense = { kind: "steal", time: 0, hand }
+      playerDefenseCooldown = 0.70
+    }
+  }
+
+  const position = player.root.position
+  const speed = playerDefense ? 2.8 : 4.65
+  playerVelocity.set(input.move.x * speed, 0, input.move.y * speed)
+  position.addScaledVector(playerVelocity, dt)
+  position.x = clamp(position.x, -court.width / 2 + 0.3, court.width / 2 - 0.3)
+  position.z = clamp(position.z, -court.length / 2 + 0.3, court.length / 2 - 0.3)
+  stride += playerVelocity.length() * dt * 5
+  face(player, robot.root.position.x, robot.root.position.z)
+}
+
+function poseDefense(dt, elapsed) {
+  pose(dt, elapsed)
+  if (robotGather > 0) {
+    const lift = THREE.MathUtils.smoothstep(robotGather, 0, 0.40)
+    const followThrough = phase === "flight" ? Math.max(0, 1 - shot.time / 0.48) : 1
+    robot.root.position.y = 0.32 * lift * followThrough
+    for (let i = 0; i < 2; i++) {
+      robot.arms[i].rotation.set(-0.45 - 1.76 * lift * followThrough, 0, (i === 0 ? -1 : 1) * 0.10)
+      robot.elbows[i].rotation.x = -0.53
+    }
+  }
+  if (playerDefense?.kind === "block") {
+    const progress = playerDefense.time / 0.62
+    player.root.position.y = 0.87 * Math.sin(Math.PI * progress)
+    for (let i = 0; i < 2; i++) {
+      player.arms[i].rotation.set(-2.63, 0, (i === 0 ? -1 : 1) * 0.16)
+      player.elbows[i].rotation.x = -0.13
+    }
+  } else if (playerDefense?.kind === "steal") {
+    const { hand, time } = playerDefense
+    const arm = player.arms[hand]
+    player.torso.worldToLocal(handAim.copy(ball.position)).sub(arm.position).normalize()
+    reachRotation.setFromUnitVectors(downArm, handAim)
+    arm.quaternion.slerp(reachRotation, THREE.MathUtils.smoothstep(time, 0.06, 0.18))
+    player.elbows[hand].rotation.x = -0.10
+  }
+}
+
+function updateRobotBall(elapsed = 0) {
+  robot.hands[robotBallHand].getWorldPosition(ball.position)
+  ball.position.y = robotGather > 0 ? ball.position.y + 0.10
+    : THREE.MathUtils.lerp(0.13, ball.position.y, Math.abs(Math.cos(elapsed * 8.1)))
+}
+
+function launchRobotShot() {
+  const distance = Math.hypot(robot.root.position.x, robot.root.position.z - rim.z)
+  const contest = clamp((1.6 - space()) / 1.1, 0, 1)
+  const chance = clamp(0.62 + 0.21 * (difficulty.speed - 1) - 0.34 * contest - 0.042 * (distance - 3), 0.15, 0.94)
+  const aim = rim.clone()
+  if (Math.random() > chance) aim.x += (round % 2 ? 1 : -1) * (0.24 + Math.random() * 0.45)
+  const travel = clamp(0.84 + distance * 0.08, 0.9, 1.48)
+  const velocity = aim.sub(ball.position).divideScalar(travel)
+  velocity.y += gravity * travel / 2
+  shot = { origin: ball.position.clone(), velocity, time: 0, made: false, blocked: false }
+  phase = "flight"
+  ui.callout.textContent = "机器人出手"
+}
+
+function updateRobotPossession(dt, elapsed) {
+  remaining = Math.max(0, remaining - dt)
+  ui.clock.textContent = timestamp()
+  ui.clock.classList.toggle("urgent", remaining < 4)
+  if (!remaining) {
+    finishRound("机器人进攻超时")
+    return
+  }
+
+  previousDribbleBall.copy(ball.position)
+  if (playerDefense?.kind === "steal") getPalmFor(player, playerDefense.hand, previousPalm)
+  updatePlayerDefense(dt)
+  robotAttackTime += dt
+
+  const attacker = robot.root.position
+  const defender = player.root.position
+  if (robotGather > 0) {
+    robotGather += dt
+  } else {
+    const distance = Math.hypot(attacker.x, attacker.z - rim.z)
+    if ((distance < 3.7 && space() > 1.06) || distance < 2.05 ||
+        (robotAttackTime > 3.9 && distance < 6.5) || remaining < 1.05) {
+      robotGather = Number.EPSILON
+      robotVelocity.set(0, 0, 0)
+      ui.callout.textContent = "机器人准备投篮"
+    } else {
+      const side = round % 2 ? -1 : 1
+      const lane = side * (space() < 1.25 ? 3.7 : 2.25)
+      waypoint.set(lane, 0, rim.z + 1.7)
+      delta.subVectors(waypoint, attacker).setY(0).normalize()
+      robotVelocity.copy(delta).multiplyScalar(3.1 * Math.sqrt(difficulty.speed))
+      attacker.addScaledVector(robotVelocity, dt)
+      robotStride += robotVelocity.length() * dt * 5
+    }
+  }
+  delta.subVectors(attacker, defender).setY(0)
+  if (delta.lengthSq() < 0.74 ** 2) {
+    if (delta.lengthSq() < 0.00001) delta.set(0, 0, 1)
+    attacker.x = defender.x + delta.normalize().x * 0.74
+    attacker.z = defender.z + delta.z * 0.74
+  }
+  attacker.x = clamp(attacker.x, -court.width / 2 + 0.24, court.width / 2 - 0.24)
+  attacker.z = clamp(attacker.z, -court.length / 2 + 0.24, court.length / 2 - 0.24)
+  chasing = robotGather === 0 && robotVelocity.lengthSq() > 0.1
+  face(robot, 0, rim.z)
+
+  poseDefense(dt, elapsed)
+  updateRobotBall(elapsed)
+  if (playerDefense?.kind === "steal" && playerDefense.time >= 0.14 && playerDefense.time <= 0.36 && robotGather < 0.30) {
+    getPalmFor(player, playerDefense.hand, robotHand).sub(ball.position)
+    if (playerDefense.time - dt >= 0.14) {
+      segment.set(previousPalm.sub(previousDribbleBall), robotHand)
+      robotHand.copy(segment.closestPointToPoint(contactOrigin, true, closest))
+    }
+    if (robotHand.lengthSq() <= (ballRadius + palmRadius + 0.055) ** 2) {
+      finishRound("抢断成功！")
+      return
+    }
+  }
+  if (robotGather >= 0.47) launchRobotShot()
+}
+
 function updateFlight(dt) {
   previousBall.copy(ball.position)
   shot.time += dt
   ball.position.copy(shot.origin).addScaledVector(shot.velocity, shot.time)
   ball.position.y -= 0.5 * gravity * shot.time ** 2
-  const inReach = defend === "block" && defendTime > 0.14 && defendTime < 0.58
+  const defendingPlayer = possession === "robot"
+  const inReach = defendingPlayer
+    ? playerDefense?.kind === "block" && playerDefense.time > 0.12 && playerDefense.time < 0.47
+    : defend === "block" && defendTime > 0.14 && defendTime < 0.58
   if (!shot.blocked && !shot.made && shot.time < 0.38 && (shot.smothered || inReach)) {
     segment.set(previousBall, ball.position)
     closest.copy(previousBall)
-    const touched = shot.smothered || robot.hands.some((hand) => {
+    const blocker = defendingPlayer ? player : robot
+    const touched = shot.smothered || blocker.hands.some((hand) => {
       hand.getWorldPosition(robotHand)
       segment.closestPointToPoint(robotHand, true, closest)
-      return closest.distanceTo(robotHand) < 0.53
+      return closest.distanceTo(robotHand) < (defendingPlayer ? 0.40 : 0.53)
     })
     if (touched) {
       shot.blocked = true
       shot.origin.copy(closest)
       ball.position.copy(closest)
       shot.time = 0
-      shot.velocity.set(robot.root.position.x > ball.position.x ? -2 : 2, 0.8, 1.8)
-      ui.callout.textContent = "被封盖"
+      shot.velocity.set(blocker.root.position.x > ball.position.x ? -2 : 2, 0.8, 1.8)
+      ui.callout.textContent = defendingPlayer ? "封盖成功！" : "被封盖"
     }
   }
 
@@ -855,13 +1020,16 @@ function updateFlight(dt) {
     closest.copy(previousBall).lerp(ball.position, fraction)
     if (closest.distanceTo(rim) < 0.119) {
       shot.made = true
-      registerBasket(shot.points, "进球！ +" + shot.points)
+      registerBasket(defendingPlayer ? "机器人进球" : "进球！")
     }
   }
 
   if (ball.position.y <= 0.12) {
     ball.position.y = 0.12
-    finishRound(shot.made ? "进球！ +" + shot.points : shot.blocked ? "被封盖" : "投篮未进")
+    const made = defendingPlayer ? "机器人进球" : "进球！"
+    const miss = defendingPlayer ? "机器人投篮未进" : "投篮未进"
+    const block = defendingPlayer ? "封盖成功！" : "被封盖"
+    finishRound(shot.made ? made : shot.blocked ? block : miss, shot.made)
   }
 }
 
@@ -976,7 +1144,7 @@ function updatePlay(dt, elapsed) {
 }
 
 if (input.touch) {
-  ui.summary.textContent = "10 个进攻回合，每回合 12 秒。拖动左半屏移动。左右移动会自动换手，快速反向可以变向。短点投篮做假动作，按住后在绿色区域松手出手。"
+  ui.summary.textContent = "先进 10 球获胜。进球继续进攻，失手交换球权。拖动左半屏移动，按钮会随攻守切换。"
 }
 ui.start.addEventListener("click", startMatch)
 for (const [button, code] of [[ui.dash, "TouchDash"], [ui.between, "TouchBetween"], [ui.spin, "TouchSpin"], [ui.post, "TouchPost"], [ui.shoot, "Space"]]) {
@@ -1007,7 +1175,8 @@ function updateCamera(dt) {
   const position = player.root.position
   const portrait = engine.camera.aspect < 0.85
   if (firstPerson) {
-    cameraGoal.set(-position.x, 0, rim.z - position.z)
+    const target = possession === "player" ? rim : robot.root.position
+    cameraGoal.set(target.x - position.x, 0, target.z - position.z)
     const distance = cameraGoal.length()
     // Keep the aim stable through spin moves and when standing under the hoop.
     if (distance > 0.45) viewDirection.copy(cameraGoal).divideScalar(distance)
@@ -1017,7 +1186,8 @@ function updateCamera(dt) {
       : THREE.MathUtils.lerp(engine.camera.position.y, eyeHeight, 1 - Math.exp(-16 * dt))
     engine.camera.position.copy(cameraGoal)
     look.copy(cameraGoal).addScaledVector(viewDirection, 3)
-    const rimSlope = (rim.y - cameraGoal.y) / Math.max(0.55, distance - 0.18)
+    const aimHeight = possession === "player" ? rim.y : robot.root.position.y + 1.30
+    const rimSlope = (aimHeight - cameraGoal.y) / Math.max(0.55, distance - 0.18)
     look.y += 3 * clamp(rimSlope * 0.72 - 0.24, -0.18, 1.9)
   } else {
     cameraGoal.set(1.95 + position.x * 0.41, portrait ? 8.5 : 6.9, position.z * 0.58 + (portrait ? 12.5 : 10.3))
@@ -1040,11 +1210,19 @@ engine.onUpdate((dt, elapsed) => {
   if (input.pressed("restart")) startMatch()
   const ballInFlight = phase === "flight" || phase === "dunk"
   if (ballInFlight) netPreviousBall.copy(ball.position)
-  if (phase === "play") updatePlay(dt, elapsed)
+  if (phase === "play") {
+    if (possession === "player") updatePlay(dt, elapsed)
+    else updateRobotPossession(dt, elapsed)
+  }
   else if (phase === "dunk") updateDunk(dt, elapsed)
   else if (phase === "flight") {
-    updateRobot(dt)
-    pose(dt)
+    if (possession === "player") {
+      updateRobot(dt)
+      pose(dt)
+    } else {
+      updatePlayerDefense(dt)
+      poseDefense(dt, elapsed)
+    }
     updateFlight(dt)
   } else if (phase === "result") {
     pose(dt)
@@ -1052,11 +1230,12 @@ engine.onUpdate((dt, elapsed) => {
     if (resultTime <= 0) nextRound()
   }
   net.update(dt, netPreviousBall, ballInFlight ? ball.position : null)
-  const dunkReady = phase === "play" && !dribble && inDunkZone()
+  const dunkReady = possession === "player" && phase === "play" && !dribble && inDunkZone()
   dunkZone.material.opacity = dunkReady ? 0.52 : 0.27
   impactLight.intensity *= Math.exp(-12 * dt)
   ui["dunk-hint"].hidden = !dunkReady
-  ui.shoot.textContent = dunkReady ? "扣篮" : "投篮"
+  ui.shoot.textContent = possession === "robot" ? "封盖" : dunkReady ? "扣篮" : "投篮"
+  ui.between.textContent = possession === "robot" ? "抢断" : "胯下"
   ui.post.setAttribute("aria-pressed", String(Boolean(post)))
   const sprinting = phase === "play" && dash > 0
   ui["dash-key"].classList.toggle("sprinting", sprinting)

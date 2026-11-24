@@ -146,3 +146,7 @@ kbd { background: #151e27; border: 1px solid #64727d; padding: 2px 5px; border-r
   .touch-controls { gap: 5px; }
   .touch-controls button { padding-inline: 7px; font-size: 14px; }
 }
+
+body:not(.defending) .defense-only,
+body.defending .offense-only,
+body.defending .touch-controls :is(#spin, #dash, #post) { display: none; }
