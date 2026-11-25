@@ -114,6 +114,7 @@ let remaining = clockDuration
 let charge = 0
 let airborne = 0
 let fake = 0
+let pickedUpDribble = false
 let stride = 0
 let robotStride = 0
 let dash = 0
@@ -168,6 +169,7 @@ function prepareRound() {
   playerDefenseCooldown = robotGather = robotAttackTime = 0
   robotBallHand = round % 2
   fake = 0
+  pickedUpDribble = false
   charge = airborne = stride = robotStride = dash = dashCooldown = 0
   defendTime = defendCooldown = recovery = reactionUntil = 0
   defend = "guard"
@@ -357,7 +359,7 @@ function updatePost(dt, elapsed, action) {
 
 function advancePlayer(dt, elapsed, action) {
   playerVelocity.set(0, 0, 0)
-  if (!dt || charge || fake || updatePost(dt, elapsed, action)) return
+  if (!dt || charge || pickedUpDribble || updatePost(dt, elapsed, action)) return
 
   if (action === "between" || action === "spin") startDribbleMove(action, elapsed)
 
@@ -502,7 +504,7 @@ function shoot() {
 }
 
 function isProtectingBall() {
-  return post ? postProtected : !crossover && playerVelocity.lengthSq() <= 0.1
+  return pickedUpDribble || (post ? postProtected : !crossover && playerVelocity.lengthSq() <= 0.1)
 }
 
 function canStealDribble(elapsed) {
@@ -724,6 +726,12 @@ function pose(dt, elapsed = 0) {
       player.arms[i].rotation.x = post ? -0.56 : 0.95
       player.arms[i].rotation.z = side * 0.32
       player.elbows[i].rotation.x = -0.55
+    }
+
+    if (pickedUpDribble && !shooting && !fake) {
+      player.arms[i].rotation.x = -0.70
+      player.arms[i].rotation.z = side * 0.06
+      player.elbows[i].rotation.x = -0.69
     }
 
     if (fake || gather) {
@@ -1034,10 +1042,9 @@ function updateFlight(dt) {
 }
 
 function takeChainedAction() {
-  const pressed = chainActions.find((action) => input.pressed(action))
+  const pressed = chainActions.find((action) => (!pickedUpDribble || action === "jump") && input.pressed(action))
   if (pressed) pendingAction = pressed
   if (!pendingAction || dribble || dash > 0 || charge || post?.time > 0 || remaining <= 0) return null
-  if (fake && pendingAction !== "jump") return null
   if (pendingAction === "sprint" && dashCooldown > 0) return null
 
   const action = pendingAction
@@ -1111,10 +1118,12 @@ function updatePlay(dt, elapsed) {
   if (charge && !letGo) charge += dt
   if (charge && letGo && charge < shotHoldThreshold) {
     fake = 0.06
+    pickedUpDribble = true
+    pendingAction = null
     charge = 0
     ui.meter.hidden = true
-    if (defend !== "block") ui.callout.textContent = "投篮假动作"
-  } else if (charge >= shotHoldThreshold && remaining > 0 && inDunkZone()) {
+    if (defend !== "block") ui.callout.textContent = "假投 · 已收球"
+  } else if (charge >= shotHoldThreshold && remaining > 0 && !pickedUpDribble && inDunkZone()) {
     startDunk()
     return
   }
@@ -1230,7 +1239,7 @@ engine.onUpdate((dt, elapsed) => {
     if (resultTime <= 0) nextRound()
   }
   net.update(dt, netPreviousBall, ballInFlight ? ball.position : null)
-  const dunkReady = possession === "player" && phase === "play" && !dribble && inDunkZone()
+  const dunkReady = possession === "player" && phase === "play" && !dribble && !pickedUpDribble && inDunkZone()
   dunkZone.material.opacity = dunkReady ? 0.52 : 0.27
   impactLight.intensity *= Math.exp(-12 * dt)
   ui["dunk-hint"].hidden = !dunkReady
